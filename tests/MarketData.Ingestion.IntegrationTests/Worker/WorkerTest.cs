@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using MarketData.Core.Domain;
 using MarketData.Infrastructure.Persistence;
+using MarketData.Infrastructure.Persistence.Entities;
+
 using Microsoft.EntityFrameworkCore;
 
 namespace MarketData.Ingestion.IntegrationTests.Worker;
