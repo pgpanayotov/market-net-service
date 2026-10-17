@@ -418,3 +418,22 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
   - Readiness JSON is now `{status, checks}` with `"Ingesting 3 symbol(s)."`.
   - After `--scale ingestion=2`, both workers were healthy, and over the next 2 minutes each symbol had exactly **2 rows** (one per minute, no duplicates).
   - Restart count 0 for both workers, and no exceptions or failures in the logs. The stack was torn down afterwards.
+
+### CI fix: stream events hooked before any subscription (2026-10-18)
+
+**Symptom:** on GitHub Actions, `IngestionPipelineTests.Worker_subscribes_active_symbols_and_persists_streamed_candles` timed out with "streamed candles in the database". It passed 15 of 15 runs locally.
+
+**Root cause:** a startup race introduced by ADR-009, when the services became plain hosted services.
+- On .NET 10, `BackgroundService` runs all of `ExecuteAsync` on the thread pool.
+- `BinanceStreamCollector` hooked `stream.CandleClosed`/`ConnectionRestored` at the start of `ExecuteAsync`, while `SymbolChangeListener`, registered before it, could already have subscribed the symbols.
+- On a slow runner the test saw the subscriptions, emitted candles, and they went nowhere because no handler was attached yet. In production the same window could drop the first candles or a reconnect signal; the gap scan would have repaired them later.
+- **Reproduced deterministically** by injecting a 1s delay before the hook, which gave the same timeout message.
+
+**Fix:**
+- The collector hooks the events in `StartAsync`, which the host runs during startup before it reports started.
+- It is now registered before the listener, so the handlers exist before anything can be subscribed.
+- The writer and backfiller only drain buffered queues, so a late `ExecuteAsync` can't lose anything for them.
+
+**Validation:**
+- With the 1s delay still injected, the test passed. After removing the delay, the ingestion project passed 5 runs in a row (32/32 each) in Release.
+- Full suite: **257 passed** (Release, `ContinuousIntegrationBuild=true`).

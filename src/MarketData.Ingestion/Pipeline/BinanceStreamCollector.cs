@@ -22,10 +22,20 @@ public sealed partial class BinanceStreamCollector(
     TimeProvider timeProvider,
     ILogger<BinanceStreamCollector> logger) : BackgroundService
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Hooks the stream events before any subscription can exist. On .NET 10 <see cref="ExecuteAsync"/> runs
+    /// on the thread pool, possibly after <c>SymbolChangeListener</c> has already subscribed, so hooking
+    /// there could miss the first candles and reconnects. The host runs <c>StartAsync</c> during startup.
+    /// </summary>
+    public override Task StartAsync(CancellationToken cancellationToken)
     {
         stream.CandleClosed += OnCandleClosed;
         stream.ConnectionRestored += OnConnectionRestored;
+        return base.StartAsync(cancellationToken);
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
         try
         {
             while (true)

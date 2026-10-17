@@ -38,9 +38,10 @@ public static class IngestionServiceCollectionExtensions
 
         // Plain hosted services: no leader election (ADR-009). Two workers overlapping for a few seconds
         // during a deploy is safe, because every write is an idempotent upsert.
+        // The collector first: it hooks the stream events in StartAsync, before the listener can subscribe anything.
+        services.AddHostedService<BinanceStreamCollector>();
         services.AddSingleton<SymbolChangeListener>();
         services.AddHostedService(sp => sp.GetRequiredService<SymbolChangeListener>());
-        services.AddHostedService<BinanceStreamCollector>();
         services.AddHostedService<CandleWriter>();
         services.AddHostedService<GapBackfiller>();
 
