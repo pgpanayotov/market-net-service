@@ -58,6 +58,6 @@ Portability (A/B) is worth less than a correct, fast rollup. Swapping databases 
 - **Revisit:** when `p=1w` p95 exceeds 500 ms or the number of symbols passes ~500, add 1h/1d rollup tables or a TimescaleDB continuous aggregate. Partition `candles_1m` by month if a retention policy is ever wanted (history is kept forever per Q2).
 
 ## Action Items
-1. [ ] `MarketDataDbContext` with Npgsql, snake_case naming, initial migration.
-2. [ ] `ICandleQueryRepository.GetBucketClosesAsync(symbolId, step, from, to, limit)` using the `date_bin` query (origin `2000-01-03Z`, a Monday).
-3. [ ] Testcontainers-based integration tests for the rollup at week, day and minute boundaries.
+1. [x] `MarketDataDbContext` with Npgsql, snake_case naming, initial migration.
+2. [x] `ICandleQueryRepository.GetBucketClosesAsync(symbolId, step, from, to, limit)` using the `date_bin` query (origin `2000-01-03Z`, a Monday).
+3. [x] Testcontainers-based integration tests for the rollup at week, day and minute boundaries.

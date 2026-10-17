@@ -52,7 +52,7 @@ The requirement is about the HTTP contract, not the programming model. B satisfi
 - **Revisit:** if more media types are needed (CSV for exports), add an output formatter. The controllers don't change.
 
 ## Action Items
-1. [ ] MVC setup in `Program.cs` as above + `AddProblemDetails()`.
-2. [ ] `XmlProblemDetailsWriter` + registration order test.
-3. [ ] `ApiKeyAuthenticationHandler` + `Admin` policy. Key from `Admin:ApiKey`.
-4. [ ] Integration tests for each endpoint: `Accept: application/json`, `application/xml`, `text/csv` (406). Errors 400/401/404 also checked in XML.
+1. [x] MVC setup in `Program.cs` as above + `AddProblemDetails()`.
+2. [x] `XmlProblemDetailsWriter` + registration order test.
+3. [x] `ApiKeyAuthenticationHandler` + `Admin` policy. Key from `Admin:ApiKey`.
+4. [x] Integration tests for each endpoint: `Accept: application/json`, `application/xml`, `text/csv` (406). Errors 400/401/404 also checked in XML.

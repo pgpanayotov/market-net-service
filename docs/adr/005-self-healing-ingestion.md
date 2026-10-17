@@ -62,7 +62,7 @@ Delivery guarantees (A) protect the wrong segment: most loss happens *before* da
 - **Revisit:** if a source without replay is ever added, this approach doesn't apply and an outbox becomes necessary. Expose `POST /api/admin/symbols/{symbol}/rescan?from=` if older gaps are seen in practice.
 
 ## Action Items
-1. [ ] `GapBackfiller` with tail mode and gap-scan mode. Range merging is unit-tested.
-2. [ ] Writer reports `CandlesDropped` and `DbRecovered` events that trigger an immediate scan.
-3. [ ] Metrics `backfill_candles_total{symbol,reason}` and `gap_minutes{symbol}`. Readiness fails if `gap_minutes > 5` for more than 10 min.
-4. [ ] Integration test: drop candles in the middle of a series, then verify the scan restores them through a stubbed REST client.
+1. [x] `GapBackfiller` with tail mode and gap-scan mode. Range merging is unit-tested.
+2. [x] Writer reports `CandlesDropped` and `DbRecovered` events that trigger an immediate scan.
+3. [ ] *(Metrics done in P4 as `marketdata.backfill.candles` and `marketdata.gap.minutes`; the readiness rule below is still open.)* Metrics `backfill_candles_total{symbol,reason}` and `gap_minutes{symbol}`. Readiness fails if `gap_minutes > 5` for more than 10 min.
+4. [x] Integration test: drop candles in the middle of a series, then verify the scan restores them through a stubbed REST client.

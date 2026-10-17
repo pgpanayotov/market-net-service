@@ -54,7 +54,7 @@ The deciding factor is **repairability**. Only klines have a REST twin with iden
 - **Revisit:** if a trade-weighted 24h average is required, use the VWAP column. If tick analytics are required, add `@aggTrade` alongside rather than replacing this.
 
 ## Action Items
-1. [ ] `Candle` entity + `candles_1m` migration with composite PK and `numeric(28,10)` prices.
-2. [ ] Binance.Net `SubscribeToKlineUpdatesAsync(symbols, OneMinute)`; filter `Final`.
-3. [ ] Upsert via `INSERT … ON CONFLICT DO UPDATE`.
+1. [x] `Candle` entity + `candles_1m` migration with composite PK and `numeric(28,10)` prices.
+2. [x] Binance.Net `SubscribeToKlineUpdatesAsync(symbols, OneMinute)`; filter `Final`.
+3. [x] Upsert via `INSERT … ON CONFLICT DO UPDATE`.
 4. [ ] Record assumption A1 (time-weighted average) in the README.

@@ -303,7 +303,10 @@ It parses JSON or XML into the shared DTOs and prints a table. ProblemDetails ma
 **Health & monitoring.**
 - **API** `/health/live`, `/health/ready`: DB reachable, no pending migrations.
 - **Ingestion** (internal port 8081) `/health/live`, `/health/ready`: DB reachable, no pending migrations, role `leader|standby`. For the leader also: WS connected, `symbol_changes` listener connected, `max(lastCandleAt)` < 2 min for every active symbol.
-- OpenTelemetry metrics: `candles_ingested_total{symbol}`, `ingest_lag_seconds` (`received_at − close_time`), `ws_reconnects_total`, `backfill_candles_total`, `channel_depth`, `marketdata.pg_listener.reconnects{channel}`, `marketdata.notifications.received{channel,outcome}` (meter `MarketData`; Prometheus export adds `_total`), `worker_is_leader`, HTTP RED metrics.
+- OpenTelemetry metrics (meter `MarketData`; a Prometheus exporter appends `_total` to counters):
+  - Ingestion: `marketdata.candles.ingested{symbol}`, `marketdata.ingest.lag` (s, histogram; `received_at − close_time`), `marketdata.ws.reconnects`, `marketdata.backfill.candles{symbol,reason}`, `marketdata.channel.depth` (gauge), `marketdata.channel.dropped`, `marketdata.writer.failures`, `marketdata.gap.minutes{symbol}` (gauge), `marketdata.worker.is_leader` (gauge).
+  - Shared: `marketdata.pg_listener.reconnects{channel}`, `marketdata.notifications.received{channel,outcome}`.
+  - API: `marketdata.analysis_cache.lookups{endpoint,result}`, plus ASP.NET Core and HttpClient instrumentation.
 - Alert ideas: data staleness > 3 min, reconnects > 5/h, backfill failing, no leader for > 1 min, migrator job failed.
 - Structured logging (Serilog/console JSON), with symbol in scope.
 

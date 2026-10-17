@@ -85,35 +85,39 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 **DoD:** the listener survives a backend kill in tests, and reconcile is called on every (re)connect.
 
 ### P4: Ingestion worker (ADR-001, ADR-005, ADR-007)
-- [ ] Binance adapters (use the `.claude/skills/binance-net` skill): `IMarketDataStream` (subscribe or unsubscribe per symbol, `ConnectionLost`/`ConnectionRestored` events) and `IKlineRestClient` (paged klines, ≤1000 per request, honouring `Retry-After`). **Base URLs are configurable** (see Risks).
-- [ ] `KlineMapper`, shared by the WS and REST paths. Golden-file tests for both inputs give identical `Candle`s.
-- [ ] `LeaderLock` hosted service: `pg_try_advisory_lock` on a dedicated connection, standby retry every 10s, gates the other services.
-- [ ] `BinanceStreamCollector` → bounded `Channel<Candle>` (10k, `DropOldest`, drop counter) → `CandleWriter` (batch ≤500 rows or 1s, Polly retry; no notification after commit).
-- [ ] `GapBackfiller`: tail mode (startup, `ConnectionRestored`, symbol add capped at `BackfillOnAdd`=24h) and scan mode (every 5 min, plus on drops or DB recovery).
-- [ ] `SymbolChangeListener` (P3 base): on connect, reconcile active symbols against live subscriptions; on notification, subscribe or unsubscribe idempotently; 60s periodic reconcile.
-- [ ] Health on `:8081`: live; ready = DB + no pending migrations + role. For the leader: WS connected, listener connected, and every active symbol fresh within 2 min.
-- [ ] OpenTelemetry metrics per system-design §7.
-- [ ] Integration tests (worker host + Testcontainers + `FakeMarketDataStream` + stubbed `IKlineRestClient`): candles persisted and notified; mid-series hole repaired by the scan; `symbol_changes` add/remove changes subscriptions; second worker stays standby, then takes over when the leader's connection drops.
+- [x] Binance adapters (use the `.claude/skills/binance-net` skill): `IMarketDataStream` (subscribe or unsubscribe per symbol, `ConnectionLost`/`ConnectionRestored` events) and `IKlineRestClient` (paged klines, ≤1000 per request, honouring `Retry-After`). **Base URLs are configurable** (see Risks).
+- [x] `KlineMapper`, shared by the WS and REST paths. Golden-file tests for both inputs give identical `Candle`s.
+- [x] `LeaderLock` hosted service: `pg_try_advisory_lock` on a dedicated connection, standby retry every 10s, gates the other services.
+- [x] `BinanceStreamCollector` → bounded `Channel<Candle>` (10k, `DropOldest`, drop counter) → `CandleWriter` (batch ≤500 rows or 1s, Polly retry; no notification after commit).
+- [x] `GapBackfiller`: tail mode (startup, `ConnectionRestored`, symbol add capped at `BackfillOnAdd`=24h) and scan mode (every 5 min, plus on drops or DB recovery).
+- [x] `SymbolChangeListener` (P3 base): on connect, reconcile active symbols against live subscriptions; on notification, subscribe or unsubscribe idempotently; 60s periodic reconcile.
+- [x] Health on `:8081`: live; ready = DB + no pending migrations + role. For the leader: WS connected, listener connected, and every active symbol fresh within 2 min.
+- [x] OpenTelemetry metrics per system-design §7.
+- [x] Integration tests (worker host + Testcontainers + `FakeMarketDataStream` + stubbed `IKlineRestClient`): candles persisted (no notification, per the P3 decision); mid-series hole repaired by the scan; `symbol_changes` add/remove changes subscriptions; second worker stays standby, then takes over when the leader's connection drops.
+
+*Done 2026-10-18; see `docs/phase-notes/P4.md`. Open item: readiness on `gap_minutes` (ADR-005 action 3) is not wired.*
 
 **DoD:** a manual run against live Binance writes one row per symbol per minute. Killing the worker for 5 minutes and restarting it leaves no gaps.
 
 ### P5: HTTP API (ADR-004, ADR-006, ADR-007)
-- [ ] MVC + `AddXmlDataContractSerializerFormatters`, `RespectBrowserAcceptHeader`, `ReturnHttpNotAcceptable`. `AddProblemDetails` + `XmlProblemDetailsWriter` registered before the JSON writer.
-- [ ] `ApiKeyAuthenticationHandler` (`X-Api-Key`, `Admin:ApiKey`) + `Admin` policy.
-- [ ] `PricesController`: `GET /api/{symbol}/24hAvgPrice` and `GET /api/{symbol}/SimpleMovingAverage?n&p&s&series&count&includePoints`.
-- [ ] `SymbolsController` (Admin):
+- [x] MVC + `AddXmlDataContractSerializerFormatters`, `RespectBrowserAcceptHeader`, `ReturnHttpNotAcceptable`. `AddProblemDetails` + `XmlProblemDetailsWriter` registered before the JSON writer.
+- [x] `ApiKeyAuthenticationHandler` (`X-Api-Key`, `Admin:ApiKey`) + `Admin` policy.
+- [x] `PricesController`: `GET /api/{symbol}/24hAvgPrice` and `GET /api/{symbol}/SimpleMovingAverage?n&p&s&series&count&includePoints`.
+- [x] `SymbolsController` (Admin):
   - `GET` with `lastCandleAt`.
   - `POST` validates through `exchangeInfo` (cached 1h), then writes and notifies in one transaction; 201/200/400/409.
   - `DELETE` soft-deletes; 204/404.
-- [ ] Every analysis request reads `latestOpenTime` through `ICandleQueryRepository.GetLatestOpenTimeAsync` (one index probe). No listener and no in-memory state in the API.
-- [ ] Caching: `IMemoryCache` key `(endpoint, symbol, params, latestOpenTime)`, 60s absolute expiry. Results whose window ends more than 48h before `latest` cached for 1h (sliding).
-- [ ] Health: DB + no pending migrations.
-- [ ] Integration tests (`WebApplicationFactory`):
+- [x] Every analysis request reads `latestOpenTime` through `ICandleQueryRepository.GetLatestOpenTimeAsync` (one index probe). No listener and no in-memory state in the API.
+- [x] Caching: `IMemoryCache` key `(endpoint, symbol, params, latestOpenTime)`, 60s absolute expiry. Results whose window ends more than 48h before `latest` cached for 1h (sliding).
+- [x] Health: DB + no pending migrations.
+- [x] Integration tests (`WebApplicationFactory`):
   - Every endpoint returns JSON, XML, and 406 for `text/csv`.
   - 400, 401 and 404 as XML ProblemDetails.
   - Admin writes emit `symbol_changes`; a rollback emits nothing.
   - A newly stored candle changes the cache key (no stale result once the next minute is stored).
   - Readiness is red when migrations are pending.
+
+*Done 2026-10-18; see `docs/phase-notes/P5.md`.*
 
 **DoD:** the full test matrix is green. OpenAPI document generated (`Microsoft.AspNetCore.OpenApi`) for README examples.
 

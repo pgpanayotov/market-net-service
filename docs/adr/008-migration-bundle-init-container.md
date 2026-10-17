@@ -72,9 +72,9 @@ C keeps EF Core migrations as the single schema source (the requirement) and mov
 - **Revisit:** if migrations become long-running (e.g. partitioning `candles_1m`), run them as a separate manual or approved Job instead of an init container so they don't block pod start.
 
 ## Action Items
-1. [ ] `IDesignTimeDbContextFactory` in Infrastructure. Tool manifest pinning `dotnet-ef`.
+1. [x] `IDesignTimeDbContextFactory` in Infrastructure. Tool manifest pinning `dotnet-ef`.
 2. [ ] Dockerfile targets `api`, `ingestion`, `migrator`. Compose services with `service_completed_successfully`.
-3. [ ] Initial migration with `HasData` for the three symbols. Remove `MigrateOnStartup` and `InitialSymbols`.
-4. [ ] `PendingMigrationsHealthCheck` in both apps' readiness.
+3. [x] Initial migration with `HasData` for the three symbols. Remove `MigrateOnStartup` and `InitialSymbols`.
+4. [x] `PendingMigrationsHealthCheck` in both apps' readiness.
 5. [ ] README: "Database initialization" section covering compose, local `dotnet ef database update`, k8s init container, roles, and the expand/contract rule.
 6. [ ] CI: build the bundle and run it against an ephemeral Postgres. Fail the build on model/migration drift (`dotnet ef migrations has-pending-model-changes`).

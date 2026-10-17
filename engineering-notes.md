@@ -170,3 +170,74 @@ Design came first, then implementation:
   - Oversized payloads and invalid channel names are rejected.
 - Flakiness check: `NotificationTests` were run 5 more times in a row, and all passed. Waits use channels with a 15s timeout, never fixed sleeps.
 - `CandleRepositoryTests` gained a test for `GetLatestOpenTimeAsync` (newest candle of that symbol only; `null` without data). `PriceAnalysisServiceTests` now stub `ICandleQueryRepository.GetLatestOpenTimeAsync`; their results are unchanged.
+
+### P4: Ingestion worker (2026-10-18, parallel session, branch `claude/p4-ingestion-491741`)
+
+Full log: [docs/phase-notes/P4.md](docs/phase-notes/P4.md).
+
+**What was built:**
+- **Binance adapters** in `Infrastructure/Binance`:
+  - Configurable endpoints (`MarketData:Binance:RestBaseUrl`/`SocketBaseUrl`).
+  - One `KlineMapper` for WS and REST, with golden files proving identical `Candle`s.
+  - `IMarketDataStream` with per-symbol idempotent subscribe/unsubscribe and once-per-socket lost/restored events.
+  - `IKlineRestClient` with paging, a shared `Retry-After` block on 429/418, and transient retries.
+- **Worker** (now on the Web SDK, health on `:8081`):
+  - `LeaderLock` runs `ILeaderService`s per leadership term; a lost session demotes to standby.
+  - `SymbolChangeListener` and `SymbolSubscriptionManager`: idempotent reconcile, ignoring `op`.
+  - `BinanceStreamCollector` → `CandlePipe` (10k, `DropOldest`) → `CandleWriter`, which sends no NOTIFY.
+  - `BackfillScheduler`/`GapBackfiller` (tail + 48h scan).
+  - Readiness: freshness is read from the DB.
+  - OTel metrics.
+
+**Decisions and deviations:**
+- **Freshness comes from the DB** (`GetLatestOpenTimesAsync`), not an in-memory `lastCandleAt`, so backfilled candles count.
+- **Retries are hand-rolled with exponential backoff, not Polly** (no new package).
+- **Options class is named `BinanceEndpointOptions`** (`BinanceOptions` clashes with Binance.Net).
+- **The 24h backfill cap applies only to symbols with no data or newly (re)subscribed ones.** Startup and reconnect tails catch up fully.
+- **Not done:** ADR-005's "readiness fails if `gap_minutes > 5` for more than 10 min". The gauge exists; readiness uses freshness only.
+- **Candles still in the pipe at shutdown aren't flushed.** The next leader's tail and scan recover them.
+
+**Validation:** 30 new tests (WebApplicationFactory + Testcontainers + fakes), with the Ingestion project run 3 more times without failures. A **live Binance run**:
+- Exactly 3 rows per minute, with about 0.5s ingest lag.
+- After a **5-minute kill and restart**, 5 candles per symbol were backfilled and the gap-scan query returned 0 missing minutes.
+- Runtime add/remove of SOLUSDT through `pg_notify` worked, including a 1440-candle backfill.
+- **Failover:** the standby took the lock 8s after the leader was killed, and there were no gaps.
+
+### P5: HTTP API (2026-10-18, parallel session, branch `claude/p5-api-8f5975`)
+
+Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
+
+**What was built:**
+- **MVC + DataContract XML**, with `XmlProblemDetailsWriter` serializing MVC's ProblemDetails wrappers as `application/problem+xml` for errors raised outside MVC.
+- **API-key auth** (constant-time compare; every admin request is rejected when no key is configured) and a UTC binder for `s`.
+- **`PricesController`** and **`SymbolsController`**:
+  - POST checks Binance exchangeInfo (the full TRADING set, cached 1h; 503 when Binance is unreachable).
+  - `SymbolAdminService` writes and notifies in one transaction, only when something changed.
+- **`CachingPriceAnalysisService` decorator.** Readiness runs DB + pending-migrations checks. OpenAPI at `/openapi/v1.json`, plus OTel.
+
+**Decisions and deviations:**
+- **No redundant probe:** the decorator runs an inner `PriceAnalysisService` over a per-request read snapshot that memoizes the symbol lookup and `GetLatestOpenTimeAsync`. A hit costs symbol lookup + probe; a miss adds one analysis query. The cached value is computed from exactly the `latestOpenTime` in its key.
+- **The SMA cache key uses `referenceTime`, not raw `s`**, so every `s` in the same bucket shares an entry.
+- **Settled windows (more than 48h old) leave `latestOpenTime` out of the key**, so the 1h sliding rule can take effect. Accepted edge case: a worker down for more than 48h backfills older data, and a settled entry can stay stale until it goes 1h without a hit.
+- **A dedicated, size-limited `MemoryCache`** (200k units).
+- **`NotAcceptableFilter` returns 406 before the action runs.** `ReturnHttpNotAcceptable` alone would 406 only *after* a POST had committed and notified, and never for 204s.
+- **503 for an exchangeInfo outage** (not in the spec table). The POST body is the stored `SymbolDto`, with a `Location` header.
+- **The cache metric sits on a second `Meter` instance with the same name**, so P4's metric file wasn't touched.
+
+**Validation:** 65 new tests.
+- JSON, XML and 406 on every endpoint, including POST/DELETE.
+- XML/JSON 400, 401 and 404, and unmatched routes.
+- `symbol_changes` checked with a real `LISTEN`, including a rollback (500 and no notification) and the 409/400/503 paths.
+- Cache freshness after a new candle; a repair behind `latest` served from cache until a newer candle arrives; `s` in one bucket shares an entry; settled windows survive new candles.
+- Readiness returns 503 with pending migrations.
+- Not run: live exchangeInfo, which belongs to P9.
+
+### P4 + P5 merge (2026-10-18)
+
+- Both branches were merged into `main` with `--no-ff` (`0291a11`, `bee6116`). They touched no common files, so there were no conflicts.
+- Both apps read the same `MarketData:Binance:RestBaseUrl` key. Each process registers only the Binance services it needs (the worker: market data; the API: the exchangeInfo validator), so no shared helper is needed.
+- `tests/Directory.Build.props` no longer passes `--ignore-exit-code 8`, since every test project now has tests.
+- **Validation on merged `main`:**
+  - `dotnet build MarketData.slnx`: 0 warnings, 0 errors.
+  - `dotnet test --solution MarketData.slnx`: **233 passed** (97 Core + 41 Infrastructure + 65 API + 30 Ingestion), exit 0.
+  - `dotnet ef migrations has-pending-model-changes`: no changes.

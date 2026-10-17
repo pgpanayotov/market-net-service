@@ -78,8 +78,8 @@ C gives B's isolation and scale-out with A's responsiveness, using a database al
 - **Revisit:** if the worker must shard (>1024 streams, ADR-001 scale limits), replace the single advisory lock with per-shard locks (`pg_try_advisory_lock(shardId)`) and assign symbols by hash.
 
 ## Action Items
-1. [ ] Create `MarketData.Ingestion` (Worker SDK) and move collector, writer and backfiller hosted services there.
+1. [x] Create `MarketData.Ingestion` (Worker SDK) and move collector, writer and backfiller hosted services there.
 2. [x] `PgNotificationListener` in Infrastructure: dedicated connection, `LISTEN` → reconcile callback → `WaitAsync` loop, exponential reconnect.
-3. [ ] `SymbolsController`: one transaction for the update and `pg_notify('symbol_changes', …)`.
-4. [ ] Advisory-lock leadership in the worker. Readiness reports `leader | standby`.
-5. [ ] Integration tests: admin add → worker subscribes (fake stream), and the listener reconnect path triggers reconcile.
+3. [x] `SymbolsController`: one transaction for the update and `pg_notify('symbol_changes', …)`.
+4. [x] Advisory-lock leadership in the worker. Readiness reports `leader | standby`.
+5. [x] Integration tests: admin add → worker subscribes (fake stream), and the listener reconnect path triggers reconcile.
