@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Restore
+        run: dotnet restore MarketData.slnx -p:ContinuousIntegrationBuild=true
+
+      - name: Build
+        run: dotnet build MarketData.slnx --no-restore -c Release -p:ContinuousIntegrationBuild=true
+
+      # Testcontainers uses the runner's Docker daemon.
+      - name: Test
+        run: dotnet test --solution MarketData.slnx --no-build -c Release
