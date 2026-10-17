@@ -33,3 +33,20 @@ jobs:
 
       - name: Check EF model has no un-migrated changes
         run: dotnet ef migrations has-pending-model-changes --project src/MarketData.Infrastructure --startup-project src/MarketData.Infrastructure --configuration Release --no-build
+
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+      - name: Build images
+        run: |
+          for target in api ingestion migrator client; do
+            docker build --target "$target" -t "marketdata/$target:ci" .
+          done
+
+      - name: Smoke-test the migration bundle against a fresh PostgreSQL
+        run: bash scripts/ci/migrator-smoke.sh marketdata/migrator:ci

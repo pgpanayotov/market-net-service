@@ -63,4 +63,4 @@ For an analysis API, *correct and explainable* beats *wall-clock fresh*. C trade
 2. [x] `PriceAnalysisService.Get24hAverageAsync` / `GetSmaAsync(n, p, s, series, count)` using `latest` from `ICandleQueryRepository.GetLatestOpenTimeAsync`.
 3. [x] API cache keyed by `latestOpenTime`: 60s absolute expiry, 1h sliding for windows older than 48h.
 4. [x] Unit tests: `s` on and off boundaries, `s > latest`, week boundary, gaps, series with partial windows at the start of history, `count` without `series` → 400.
-5. [ ] README: document A1/A2 and the anchoring rule with an example.
+5. [x] README: document A1/A2 and the anchoring rule with an example.

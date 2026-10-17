@@ -144,9 +144,9 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 **DoD:** `docker compose up --build` on a clean machine gives a healthy API and worker and 3 symbols ingesting. `docker compose run --rm client avg BTCUSDT` works after about 2 minutes.
 
 ### P8: Documentation & deliverables (ongoing)
-- [ ] `README.md`: prerequisites, quick start, configuration reference (all `MarketData:*`, `Admin:*`, connection strings), **DB initialization** (compose migrator, local `dotnet ef database update`, k8s init container, roles, expand/contract rule), API reference with curl examples for JSON and XML, the analysis semantics (A1/A2 + anchoring), client usage, troubleshooting (Binance geo-restrictions, stale data).
-- [ ] `engineering-notes.md`: approach, key decisions (link ADRs), deviations, and **validation steps actually run**, with results.
-- [ ] CI (GitHub Actions): restore with locked packages, build, test (Testcontainers), `has-pending-model-changes`, build all Docker targets, bundle smoke-run against a service container.
+- [x] `README.md`: prerequisites, quick start, configuration reference (all `MarketData:*`, `Admin:*`, connection strings), **DB initialization** (compose migrator, local `dotnet ef database update`, k8s init container, roles, expand/contract rule), API reference with curl examples for JSON and XML, the analysis semantics (A1/A2 + anchoring), client usage, troubleshooting (Binance geo-restrictions, stale data).
+- [x] `engineering-notes.md`: approach, key decisions (link ADRs), deviations, and **validation steps actually run**, with results.
+- [x] CI (GitHub Actions): restore with locked packages, build, test (Testcontainers), `has-pending-model-changes`, build all Docker targets, bundle smoke-run against a service container.
 
 ### P9: Validation & acceptance
 | Requirement | Check |

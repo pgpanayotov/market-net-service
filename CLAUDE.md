@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Phases P0–P7 are implemented on `main` (Core, persistence, notifications, ingestion worker, HTTP API, console client, Docker); P8 (docs, CI) and P9 (acceptance) remain (see `docs/implementation-plan.md`). The code follows these documents:
+Phases P0–P8 are implemented on `main` (Core, persistence, notifications, ingestion worker, HTTP API, console client, Docker, README + CI); only P9 (acceptance) remains (see `docs/implementation-plan.md`). The code follows these documents:
 - `docs/requirements.md`: the assignment spec (.NET 10 service that collects Binance Spot prices and offers analysis endpoints, plus a console client).
 - `docs/system-design.md`: the full design (data model, API contracts, pipelines, deployment).
 - `docs/adr/`: accepted decisions (ADR-001, 002, 004–008; ADR-003 is superseded). Don't contradict an accepted ADR. If a change is needed, write a new ADR that supersedes it and update `docs/system-design.md` and the index in `docs/adr/README.md`.
 
 The project skill `.claude/skills/binance-net` covers idiomatic Binance.Net usage (WebSocket subscriptions, REST klines/exchangeInfo, result handling). Use it for any Binance code.
 
-Required deliverables beyond code: `README.md` (setup, configuration, DB initialization) and `engineering-notes.md` (approach, key decisions, validation steps).
+Required deliverables beyond code, all present: `README.md` (setup, configuration, DB initialization; keep its configuration tables in sync when adding options) and `engineering-notes.md` (approach, key decisions, validation steps). Detailed side-session logs live in `docs/phase-notes/`.
 
 ## Commands
 
@@ -21,7 +21,7 @@ Tests run on **Microsoft.Testing.Platform** (set in `global.json`; xUnit v3 does
 dotnet tool restore
 dotnet build MarketData.slnx
 dotnet test --solution MarketData.slnx
-dotnet test --project tests/MarketData.Core.Tests --filter-class "MarketData.Core.Tests.TimePeriodTests"   # one class
+dotnet test --project tests/MarketData.Core.Tests --filter-class "MarketData.Core.Tests.Domain.TimePeriodTests"   # one class
 dotnet test --project tests/MarketData.Core.Tests --filter-method "*Floor*"                                 # matching methods
 ```
 

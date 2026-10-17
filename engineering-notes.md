@@ -320,3 +320,35 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
   - After `docker stop` on the leader, `ingestion-2` became leader within 2s. One readiness probe during takeover was "listener not connected", then it went healthy.
   - Each symbol then had contiguous candles up to the current minute.
 - Torn down with `docker compose --profile tools down -v`.
+
+### P8: Documentation & CI (2026-10-18)
+
+**What was built:**
+- **`README.md`:**
+  - Overview with an architecture sketch, a Docker quick start, and the HTTP API (endpoints, curl examples in JSON and XML, SMA parameters, status codes, and how the numbers are computed: assumptions A1/A2 and the anchoring rule).
+  - Console client usage and exit codes.
+  - A full configuration reference (shared, API, worker, compose `.env`) taken from the options classes and appsettings.
+  - **Database initialization:** compose migrator, local `dotnet ef database update`, the bundle by hand, a Kubernetes `initContainer` snippet, a separate-roles SQL, and the expand/contract rule.
+  - Running without Docker, development commands, operations (health, metrics, scaling, completeness), and troubleshooting (Binance 451 → mirrors, schema behind, 401, port clashes, the GSS warning).
+- **CI** (`.github/workflows/ci.yml`) gained a `containers` job: `docker compose config --quiet`, then a build of all four Docker targets, then `scripts/ci/migrator-smoke.sh`. The script starts a fresh `postgres:17-alpine` on a private Docker network and checks two things:
+  - Run 1 applies migrations and seeds exactly `ADAUSDT,BTCUSDT,ETHUSDT`.
+  - Run 2 prints "No migrations were applied" and leaves the history unchanged.
+  - The same script runs locally (Git Bash) and in Actions.
+
+**Decisions and deviations:**
+- **CI doesn't start the full compose stack.** GitHub-hosted runners are commonly blocked by Binance (HTTP 451), so a live-ingestion job would be flaky. The worker's behaviour is covered by its integration tests (fake stream, stubbed REST); live checks are recorded here instead (P4, P6, P7) and in P9.
+- **The README's production-roles SQL was checked before it went in.** That only `SELECT, INSERT, UPDATE` are needed follows from the design (soft deletes, no `DELETE`), and the check confirmed it is enough.
+- **Fixed CLAUDE.md's single-class test filter example.** The class is `MarketData.Core.Tests.Domain.TimePeriodTests`.
+- **The first migrator run logs one `Failed executing DbCommand`.** That is EF probing `__EFMigrationsHistory` before the table exists on a fresh database; the run then applies the migration and exits 0. It's harmless, but noted so nobody mistakes it for a failure.
+
+**Validation:**
+- **CI `build-test` steps run locally in Release:**
+  - `dotnet restore … -p:ContinuousIntegrationBuild=true` (locked mode; no lock-file changes).
+  - Build: 0 warnings, 0 errors.
+  - Tests: **251 passed**.
+  - `has-pending-model-changes`: no changes.
+- **CI `containers` steps run locally:** `docker compose config` passed, all four targets built, and `migrator-smoke.sh` passed (run 1 applied `Initial` and the seed; run 2 was a no-op).
+- **README roles SQL**, on a fresh `postgres:17-alpine`:
+  - As `marketdata_migrator`, the migrator image migrated the database.
+  - As `marketdata_app`, the app role could read `__EFMigrationsHistory`, run the `ON CONFLICT` symbol upsert (id 100), update, run the candle upsert, `LISTEN`/`pg_notify` (notification received) and `pg_try_advisory_lock` (true).
+  - `CREATE TABLE` as `marketdata_app` was refused ("permission denied for schema public").

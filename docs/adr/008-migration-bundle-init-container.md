@@ -76,5 +76,5 @@ C keeps EF Core migrations as the single schema source (the requirement) and mov
 2. [x] Dockerfile targets `api`, `ingestion`, `migrator`. Compose services with `service_completed_successfully`.
 3. [x] Initial migration with `HasData` for the three symbols. Remove `MigrateOnStartup` and `InitialSymbols`.
 4. [x] `PendingMigrationsHealthCheck` in both apps' readiness.
-5. [ ] README: "Database initialization" section covering compose, local `dotnet ef database update`, k8s init container, roles, and the expand/contract rule.
-6. [ ] CI: build the bundle and run it against an ephemeral Postgres. Fail the build on model/migration drift (`dotnet ef migrations has-pending-model-changes`).
+5. [x] README: "Database initialization" section covering compose, local `dotnet ef database update`, k8s init container, roles, and the expand/contract rule.
+6. [x] CI: build the bundle and run it against an ephemeral Postgres. Fail the build on model/migration drift (`dotnet ef migrations has-pending-model-changes`).
