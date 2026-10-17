@@ -1,12 +1,17 @@
 namespace MarketData.Ingestion;
 
-/// <summary>Worker settings, bound from the <c>MarketData</c> section (e.g. <c>MarketData:BackfillOnAdd</c>).</summary>
+/// <summary>Worker settings, bound from the <c>MarketData</c> section (e.g. <c>MarketData:HistoryDepth</c>).</summary>
 public sealed class IngestionOptions
 {
     public const string SectionName = "MarketData";
 
-    /// <summary>How far back a newly added (or reactivated) symbol, or one with no data, is backfilled.</summary>
-    public TimeSpan BackfillOnAdd { get; set; } = TimeSpan.FromHours(24);
+    /// <summary>
+    /// How much history every active symbol should have, counted back from now. Replaces the former
+    /// <c>BackfillOnAdd</c>. At the start of a leader term and when a symbol is added or reactivated, a
+    /// symbol with no data is filled from <c>now − HistoryDepth</c>, and one whose oldest candle is
+    /// younger than that is deepened backwards. The default covers a 1w SMA with n up to 5.
+    /// </summary>
+    public TimeSpan HistoryDepth { get; set; } = TimeSpan.FromDays(35);
 
     /// <summary>Capacity of the in-memory candle channel between the stream and the writer. Oldest candles are dropped when full.</summary>
     public int ChannelCapacity { get; set; } = 10_000;

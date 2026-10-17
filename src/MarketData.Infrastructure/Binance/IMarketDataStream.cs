@@ -1,4 +1,3 @@
-using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 
 namespace MarketData.Infrastructure.Binance;

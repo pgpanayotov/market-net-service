@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
+
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using Binance.Net.Interfaces.Clients;
+
 using CryptoExchange.Net.Objects.Sockets;
-using MarketData.Core.Abstractions;
+
 using MarketData.Core.Domain;
+
 using Microsoft.Extensions.Logging;
 
 namespace MarketData.Infrastructure.Binance;

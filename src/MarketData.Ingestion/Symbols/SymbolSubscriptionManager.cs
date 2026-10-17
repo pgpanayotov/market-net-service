@@ -10,7 +10,7 @@ namespace MarketData.Ingestion.Symbols;
 /// Converges live stream subscriptions to the active symbols in the database, which is the source of
 /// truth (ADR-007). Every operation is idempotent and serialized, so a reconcile and a notification for
 /// the same symbol can't interleave. A newly subscribed symbol gets a tail backfill capped at
-/// <see cref="IngestionOptions.BackfillOnAdd"/>.
+/// <see cref="IngestionOptions.HistoryDepth"/> (and the history is deepened backwards to that depth).
 /// </summary>
 public sealed partial class SymbolSubscriptionManager(
     IMarketDataStream stream,

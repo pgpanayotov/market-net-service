@@ -22,7 +22,7 @@ public sealed class WorkerFactory(string connectionString, IReadOnlyDictionary<s
     /// <summary>Short intervals so tests finish quickly; periodic work is slow so tests see the event-driven paths.</summary>
     private static readonly Dictionary<string, string> Defaults = new()
     {
-        ["MarketData:BackfillOnAdd"] = "00:30:00",
+        ["MarketData:HistoryDepth"] = "00:30:00",
         ["MarketData:GapScanInterval"] = "01:00:00",
         ["MarketData:ReconcileInterval"] = "01:00:00",
         ["MarketData:LeaderRetryInterval"] = "00:00:00.300",

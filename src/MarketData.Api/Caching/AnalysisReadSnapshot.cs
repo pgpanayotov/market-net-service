@@ -1,5 +1,6 @@
 using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
+using MarketData.Core.Enums;
 
 namespace MarketData.Api.Caching;
 
@@ -47,6 +48,9 @@ internal sealed class AnalysisReadSnapshot(ISymbolRepository symbols, ICandleQue
         int limit,
         CancellationToken cancellationToken) =>
         candles.GetBucketClosesAsync(symbolId, period, from, to, limit, cancellationToken);
+
+    public Task<DateTimeOffset?> GetFirstOpenTimeAsync(int symbolId, CancellationToken cancellationToken) =>
+        candles.GetFirstOpenTimeAsync(symbolId, cancellationToken);
 
     public Task<IReadOnlyDictionary<int, DateTimeOffset>> GetLatestOpenTimesAsync(CancellationToken cancellationToken) =>
         candles.GetLatestOpenTimesAsync(cancellationToken);

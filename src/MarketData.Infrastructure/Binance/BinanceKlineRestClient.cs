@@ -1,12 +1,15 @@
 using System.Net;
 using System.Runtime.CompilerServices;
+
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using Binance.Net.Interfaces.Clients;
+
 using CryptoExchange.Net.Objects;
 using CryptoExchange.Net.Objects.Errors;
-using MarketData.Core.Abstractions;
+
 using MarketData.Core.Domain;
+
 using Microsoft.Extensions.Logging;
 
 namespace MarketData.Infrastructure.Binance;

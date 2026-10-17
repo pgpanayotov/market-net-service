@@ -41,6 +41,36 @@ public sealed class IngestionPipelineTests(PostgresFixture postgres) : WorkerTes
     }
 
     [Fact]
+    public async Task Symbol_with_only_recent_data_gets_its_head_filled_back_to_the_history_depth()
+    {
+        var first = ThisMinute.AddMinutes(-10);
+        await SeedAsync(Enumerable.Range(0, 9).Select(i => StubKlineRestClient.Synthetic(Btc, first.AddMinutes(i))));
+
+        var worker = StartWorker();
+
+        await EventuallyAsync(async () => (await CandlesAsync(Btc)).Count >= 30, "BTC deepened back to the 30 minute history depth");
+        var rows = await CandlesAsync(Btc);
+        Assert.Equal(ThisMinute.AddMinutes(-30), rows[0].OpenTime, TimeSpan.FromMinutes(1));
+        Assert.All(rows, r => Assert.Equal(Values(StubKlineRestClient.Synthetic(Btc, r.OpenTime)), Values(r)));
+        Assert.Contains(worker.Rest.Requests, r => r.Symbol == "BTCUSDT" && r.Range.To == first && Math.Abs((r.Range.From - ThisMinute.AddMinutes(-30)).TotalMinutes) <= 1);
+    }
+
+    [Fact]
+    public async Task Nothing_is_refetched_when_the_history_depth_is_already_satisfied()
+    {
+        var first = ThisMinute.AddMinutes(-40);
+        await SeedAsync(Enumerable.Range(0, 39).Select(i => StubKlineRestClient.Synthetic(Btc, first.AddMinutes(i))));
+
+        var worker = StartWorker();
+
+        // ADA and ETH have no data, so their depth fills prove the whole startup pass ran.
+        await EventuallyAsync(async () => (await CandlesAsync(Ada)).Count >= 30 && (await CandlesAsync(Eth)).Count >= 30, "the other symbols filled");
+        await Task.Delay(500, Ct);
+        Assert.DoesNotContain(worker.Rest.Requests, r => r.Symbol == "BTCUSDT" && r.Range.From < first.AddMinutes(39));
+        Assert.Equal(first, (await CandlesAsync(Btc))[0].OpenTime);
+    }
+
+    [Fact]
     public async Task Gap_scan_repairs_a_hole_behind_the_newest_candle()
     {
         var start = ThisMinute.AddMinutes(-40);

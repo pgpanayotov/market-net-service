@@ -1,9 +1,9 @@
-using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 
 namespace MarketData.Core.Analysis;
 
-public readonly record struct SmaValue(DateTimeOffset Time, decimal Average, int DataPointsUsed);
+/// <summary>One series value; <see cref="Average"/> is <c>null</c> (and the data point count 0) for a window without data.</summary>
+public readonly record struct SmaValue(DateTimeOffset Time, decimal? Average, int DataPointsUsed);
 
 /// <summary>Simple moving average over bucket closes (ADR-006).</summary>
 public static class SmaCalculator
@@ -30,7 +30,7 @@ public static class SmaCalculator
     /// buckets starting in [E<sub>k</sub> − n·p, E<sub>k</sub>), where E<sub>k</sub> =
     /// <paramref name="referenceTime"/> − (count − 1 − k)·p. Windows are defined by time, so gaps reduce
     /// <see cref="SmaValue.DataPointsUsed"/> rather than pulling in older buckets. Windows with no data
-    /// are omitted. Runs in O(buckets + count) using a sliding sum, which is exact because
+    /// are kept as items with <c>null</c> average and 0 data points, so exactly <paramref name="count"/> values come back, oldest first. Runs in O(buckets + count) using a sliding sum, which is exact because
     /// <see cref="decimal"/> addition and subtraction don't round at these magnitudes.
     /// </summary>
     public static IReadOnlyList<SmaValue> Series(
@@ -65,10 +65,7 @@ public static class SmaCalculator
             }
 
             var used = hi - lo;
-            if (used > 0)
-            {
-                result.Add(new SmaValue(end, Round(sum / used), used));
-            }
+            result.Add(used > 0 ? new SmaValue(end, Round(sum / used), used) : new SmaValue(end, null, 0));
         }
 
         return result;

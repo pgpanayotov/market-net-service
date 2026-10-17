@@ -62,6 +62,18 @@ public class ConsoleClientTests(ApiFixture fixture) : ApiTest(fixture)
     }
 
     [Fact]
+    public async Task Sma_SeriesTable_ShowsDashForEmptyWindows()
+    {
+        await SeedAsync(Minutes(Btc, T0, 1m, 2m));
+
+        var (exit, output, _) = await RunAsync("sma", "BTCUSDT", "-n", "1", "-p", "1m", "--series", "--count", "3");
+
+        Assert.Equal(Cli.Success, exit);
+        Assert.Contains("3 value(s)", output, StringComparison.Ordinal);
+        Assert.Matches(@"2026-10-18 12:00 UTC\s+-\s+0", output);
+    }
+
+    [Fact]
     public async Task Sma_StartWithOffset_IsSentEscaped()
     {
         await SeedAsync(Minutes(Btc, T0, 1m, 2m, 3m, 4m));

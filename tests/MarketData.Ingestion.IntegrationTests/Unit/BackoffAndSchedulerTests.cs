@@ -1,4 +1,3 @@
-using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 using MarketData.Infrastructure;
 using MarketData.Ingestion.Backfill;

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using MarketData.Core.Abstractions;
+
+using MarketData.Core.Domain;
 
 namespace MarketData.Ingestion.Backfill;
 

@@ -1,7 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Globalization;
-using MarketData.Core.Abstractions;
+
+using MarketData.Core.Domain;
 
 namespace MarketData.Ingestion.Pipeline;
 

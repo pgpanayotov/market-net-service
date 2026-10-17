@@ -12,7 +12,7 @@ The first draft backfilled from `max(open_time)` per symbol. **Review R1:** if o
 ## Decision
 Make the store **converge to complete** instead of trying to make delivery reliable:
 1. All writes are idempotent upserts on `(symbol_id, open_time)` (ADR-001).
-2. **Tail backfill:** at startup, on WS `ConnectionRestored`, and on symbol add, fetch REST `/api/v3/klines` from `max(open_time) + 1m` to the last closed minute. On add, the start is capped at `MarketData:BackfillOnAdd` (default 24h).
+2. **Tail backfill:** at startup, on WS `ConnectionRestored`, and on symbol add, fetch REST `/api/v3/klines` from `max(open_time) + 1m` to the last closed minute. On add, the start is capped at `MarketData:HistoryDepth` (see the 2026-10-18 amendment below).
 3. **Gap scan (new, fixes R1):** every 5 minutes, and immediately after the writer recovers from a DB error or reports drops, run per active symbol:
    ```sql
    SELECT m AS missing
@@ -66,3 +66,9 @@ Delivery guarantees (A) protect the wrong segment: most loss happens *before* da
 2. [x] Writer reports `CandlesDropped` and `DbRecovered` events that trigger an immediate scan.
 3. [ ] *(Metrics done in P4 as `marketdata.backfill.candles` and `marketdata.gap.minutes`; the readiness rule below is still open.)* Metrics `backfill_candles_total{symbol,reason}` and `gap_minutes{symbol}`. Readiness fails if `gap_minutes > 5` for more than 10 min.
 4. [x] Integration test: drop candles in the middle of a series, then verify the scan restores them through a stubbed REST client.
+
+## Amendment 2026-10-18: history-depth (head) backfill
+P9 acceptance found that tail backfill only moves forward from `max(open_time) + 1m` and the 48h gap scan ignores minutes before the first candle, so a `1w` SMA stayed at 404 until the service had run for weeks, and existing databases never gained older history.
+- **New option `MarketData:HistoryDepth`** (default **35 days**, enough for `1w` SMAs with `n` up to 5). It **replaces** `BackfillOnAdd` rather than sitting next to it: both described "how far back do we want data", and a second knob would only invite settings where the add-time depth is smaller than the standing one. A deployment that still sets `BackfillOnAdd` is silently ignored (the key is unbound); the README documents the rename.
+- **Head backfill:** at the start of every leader term (`Startup`) and on symbol add/reactivate (`SymbolAdded`), for each active symbol with data, if its oldest stored candle is later than `now − HistoryDepth`, fetch `[now − HistoryDepth, firstCandle)` through the existing paged REST client and upsert. A symbol without data is filled by the tail run, which now starts at the depth instead of 24h. Reconnects and DB recovery skip the head check because the oldest candle can't have moved.
+- **Cost and limits:** one `min(open_time)` probe (PK index) per symbol per term; when the depth is already satisfied nothing is fetched. A symbol listed on Binance later than `now − HistoryDepth` costs one REST request per term that returns nothing. Gaps inside the stored range are still the scan's job (48h window), so a hole older than 48h that was never fetched stays a hole.

@@ -1,5 +1,7 @@
 using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
+using MarketData.Core.Enums;
+
 using Microsoft.EntityFrameworkCore;
 
 namespace MarketData.Infrastructure.Persistence;

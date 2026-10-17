@@ -1,5 +1,6 @@
 using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
+using MarketData.Core.Enums;
 using MarketData.Infrastructure.Notifications;
 using MarketData.Infrastructure.Persistence;
 

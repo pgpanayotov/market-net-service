@@ -3,6 +3,7 @@ using MarketData.Api.Symbols;
 using MarketData.Contracts;
 using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
+using MarketData.Core.Enums;
 using MarketData.Infrastructure.Binance;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;

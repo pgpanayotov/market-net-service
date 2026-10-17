@@ -1,6 +1,6 @@
-using MarketData.Core.Abstractions;
 using MarketData.Core.Analysis;
 using MarketData.Core.Domain;
+
 using static MarketData.Core.Tests.TestTime;
 
 namespace MarketData.Core.Tests.Analysis;
@@ -57,13 +57,14 @@ public class SmaCalculatorTests
     }
 
     [Fact]
-    public void Series_AtStartOfHistory_EmitsPartialWindows()
+    public void Series_AtStartOfHistory_EmitsEmptyThenPartialWindows()
     {
-        // Only 2 buckets exist; n=3, count=3.
+        // Only 2 buckets exist; n=3, count=3: the oldest window is empty but still an item.
         var series = SmaCalculator.Series(FiveMinuteBuckets(10m, 20m), TimePeriod.FiveMinutes, n: 3, count: 3, Ref);
 
         Assert.Equal(
             [
+                new SmaValue(Ref - TimeSpan.FromMinutes(10), null, 0),
                 new SmaValue(Ref - TimeSpan.FromMinutes(5), 10m, 1),
                 new SmaValue(Ref, 15m, 2),
             ],
@@ -87,12 +88,20 @@ public class SmaCalculatorTests
     }
 
     [Fact]
-    public void Series_SkipsWindowsWithNoData()
+    public void Series_KeepsWindowsWithNoDataAsEmptyItems()
     {
         // Single bucket far in the past relative to the windows.
         var buckets = new[] { new BucketClose(Ref - TimeSpan.FromHours(5), 1m) };
 
-        Assert.Empty(SmaCalculator.Series(buckets, TimePeriod.FiveMinutes, n: 2, count: 3, Ref));
+        var series = SmaCalculator.Series(buckets, TimePeriod.FiveMinutes, n: 2, count: 3, Ref);
+
+        Assert.Equal(
+            [
+                new SmaValue(Ref - TimeSpan.FromMinutes(10), null, 0),
+                new SmaValue(Ref - TimeSpan.FromMinutes(5), null, 0),
+                new SmaValue(Ref, null, 0),
+            ],
+            series);
     }
 
     [Fact]

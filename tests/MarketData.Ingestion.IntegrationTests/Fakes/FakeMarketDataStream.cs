@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using MarketData.Core.Abstractions;
+
 using MarketData.Core.Domain;
 using MarketData.Infrastructure.Binance;
 

@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
-using MarketData.Core.Abstractions;
+
 using MarketData.Core.Domain;
 using MarketData.Infrastructure.Binance;
 

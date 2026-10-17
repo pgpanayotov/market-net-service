@@ -133,7 +133,7 @@ curl -X DELETE -H "X-Api-Key: dev-admin-key" http://localhost:8080/api/admin/sym
   - A bucket's close is the close of its last 1-minute candle.
   - Buckets align to UTC; weeks start Monday 00:00 UTC, like Binance's `1w` klines.
   - Missing buckets are skipped, and `dataPointsUsed` reports how many were available.
-- **A series** returns `count` values, each the SMA(n) ending at its `time`. The last one equals the single-value result.
+- **A series** returns exactly `count` values, oldest first, each the SMA(n) ending at its `time`. The last one equals the single-value result. A window without data is still listed, with `dataPointsUsed: 0` and no `simpleMovingAverage` (the console client prints `-`); the response is 404 only when no window has data.
 
 ---
 
@@ -192,7 +192,7 @@ Standard .NET configuration: `appsettings.json`, then environment variables (`__
 | Key | Default | Description |
 |---|---|---|
 | `MarketData:Binance:SocketBaseUrl` | `wss://stream.binance.com:9443` | Spot WebSocket base URL |
-| `MarketData:BackfillOnAdd` | `1.00:00:00` | Backfill depth for a newly added or reactivated symbol, or one without data |
+| `MarketData:HistoryDepth` | `35.00:00:00` | History every active symbol should have, counted back from now. At the start of a leader term and when a symbol is added or reactivated, missing history before the oldest stored candle is fetched (a symbol without data starts at this depth). Replaces the former `BackfillOnAdd` (24h); an old `BackfillOnAdd` setting is ignored |
 | `MarketData:GapScanInterval` / `GapScanWindow` | `00:05:00` / `2.00:00:00` | Gap-scan cadence and how far back it looks |
 | `MarketData:ReconcileInterval` | `00:01:00` | Periodic reconcile of active symbols against live subscriptions |
 | `MarketData:ChannelCapacity` | `10000` | In-memory buffer between stream and writer (oldest dropped when full; the gap scan repairs drops) |

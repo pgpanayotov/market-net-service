@@ -1,7 +1,7 @@
-using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 using MarketData.Infrastructure.Notifications;
 using MarketData.Infrastructure.Persistence;
+
 using Microsoft.Extensions.Time.Testing;
 
 namespace MarketData.Ingestion.IntegrationTests.Worker;
@@ -21,7 +21,7 @@ public sealed class SymbolChangesTests(PostgresFixture postgres) : WorkerTest(po
         var sol = await ChangeAsync("SOLUSDT", SymbolChangeOperation.Add);
 
         await EventuallyAsync(() => worker.Stream.SubscribedNames.Contains("SOLUSDT"), "SOLUSDT subscribed");
-        await EventuallyAsync(async () => (await CandlesAsync(sol.Id)).Count >= 30, "SOLUSDT backfilled (BackfillOnAdd = 30 min)");
+        await EventuallyAsync(async () => (await CandlesAsync(sol.Id)).Count >= 30, "SOLUSDT backfilled (HistoryDepth = 30 min)");
         Assert.True((await CandlesAsync(sol.Id)).Count <= 31);
 
         await ChangeAsync("SOLUSDT", SymbolChangeOperation.Remove);

@@ -1,7 +1,7 @@
-using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 using MarketData.Infrastructure.Binance;
 using MarketData.Ingestion.IntegrationTests.Fakes;
+
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 

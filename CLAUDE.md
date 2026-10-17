@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-All phases P0–P9 are done on `main` (P9 acceptance passed; see `engineering-notes.md` § P9). Open follow-up: history depth for `1d`/`1w` SMA. The code follows these documents:
+All phases P0–P9 are done on `main` (P9 acceptance passed; see `engineering-notes.md` § P9), plus the P9 follow-up: `MarketData:HistoryDepth` head backfill (35d) and SMA series that always return `count` items. The code follows these documents:
 - `docs/requirements.md`: the assignment spec (.NET 10 service that collects Binance Spot prices and offers analysis endpoints, plus a console client).
 - `docs/system-design.md`: the full design (data model, API contracts, pipelines, deployment).
 - `docs/adr/`: accepted decisions (ADR-001, 002, 004–008; ADR-003 is superseded). Don't contradict an accepted ADR. If a change is needed, write a new ADR that supersedes it and update `docs/system-design.md` and the index in `docs/adr/README.md`.
