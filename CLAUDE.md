@@ -34,7 +34,11 @@ dotnet ef migrations add <Name> --project src/MarketData.Infrastructure --startu
 dotnet ef database update --project src/MarketData.Infrastructure                 # local DB without Docker
 dotnet ef migrations has-pending-model-changes --project src/MarketData.Infrastructure
 ```
-`dotnet-ef` is pinned in `.config/dotnet-tools.json`. Integration tests use Testcontainers, so Docker must be running. Package versions live only in `Directory.Packages.props` (central package management), so `<PackageReference>` entries carry no `Version`.
+`dotnet-ef` is pinned in `.config/dotnet-tools.json`. Integration tests use Testcontainers, so Docker must be running. `tests/MarketData.Infrastructure.IntegrationTests` shares one Postgres container and resets data before each test (parallelization is off in its `xunit.runner.json`).
+
+Package versions live only in `Directory.Packages.props` (central package management), so `<PackageReference>` entries carry no `Version`. Transitive pinning is on, so pin a transitive package there if versions conflict.
+
+Hand-written SQL in `src/MarketData.Infrastructure/Persistence` uses raw Npgsql commands created with `DbContextSqlExtensions.CreateCommandAsync`, which joins the context's current transaction. Keep the `date_bin` origin equal to `TimePeriod.BucketOrigin`; a test checks that SQL buckets match `TimePeriod.Floor`.
 
 Record each phase's decisions, deviations and validation results in `engineering-notes.md` (a required deliverable).
 

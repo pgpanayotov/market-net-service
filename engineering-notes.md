@@ -75,3 +75,52 @@ Design came first, then implementation:
 - `dotnet test --project tests/MarketData.Core.Tests`: 97 passed.
 - Coverage (`--coverage --coverage-output-format cobertura`): **100% line and branch on every hand-written Contracts and Core class**, including `TimePeriod`, `SmaCalculator`, `AnalysisValidator` and `PriceAnalysisService`. The only code under 100% is the regex source-generator output.
 - Contract round-trips: every DTO serializes → deserializes → serializes identically through System.Text.Json (web defaults) and `DataContractSerializer`. Golden assertions pin the XML element names, the omission of unset members, and the JSON shape of a series response.
+
+### P2: Persistence (2026-10-18)
+
+**What was built:**
+- **Core:** a `Candle` write model and `TimeRange`.
+  - `ISymbolRepository` gained list, active, activate and deactivate operations (with outcome enums).
+  - `ICandleQueryRepository` gained `GetLatestOpenTimesAsync`.
+  - New `ICandleIngestRepository` covers upserts and the gap scan.
+- **Infrastructure / Persistence:**
+  - `MarketDataDbContext` (snake_case naming, `symbols` + `candles_1m`, composite PK, `numeric(28,10)`/`(38,10)`, FK `Restrict`).
+  - `DesignTimeDbContextFactory`, the `Initial` migration with `HasData` seed, `SymbolRepository`, `CandleRepository`, `PendingMigrationsHealthCheck`, and `AddMarketDataPersistence` (DI; never migrates).
+- **Hand-written SQL** runs through raw Npgsql commands on the context's connection, joined to its current transaction:
+  - `INSERT … SELECT unnest(…) ON CONFLICT DO UPDATE … WHERE … IS DISTINCT FROM` for upserts.
+  - `date_bin` + `DISTINCT ON` for SMA buckets.
+  - `round(avg(close), 10)` for the 24h average.
+  - `LATERAL max()` for the newest candle per symbol.
+  - `generate_series` + `row_number()` grouping for the gap scan.
+
+**Decisions and deviations:**
+- **Raw Npgsql commands instead of `SqlQuery<T>`.** `SqlQuery<T>` maps columns by name, and how that interacts with `EFCore.NamingConventions` isn't obvious. Raw commands read by ordinal with no ambiguity. Because they enlist in `Database.CurrentTransaction`, the API can commit a symbol write and its `pg_notify` together (ADR-007), which a test covers.
+- **Symbol activation is a single `INSERT … ON CONFLICT (name) DO UPDATE … WHERE NOT is_active RETURNING id, (xmax = 0)`.** Concurrent adds can't race into a unique violation (which would also abort the caller's transaction). The `xmax = 0` value tells a fresh insert apart from a reactivation, and no returned row means "already active".
+- **Seeded rows reserve ids 1–99.** `HasData` sets ids explicitly, which doesn't advance the identity sequence, so the identity starts at 100 (`HasIdentityOptions(startValue: 100)`). Verified: the first admin-added symbol gets id 100.
+- **Upserts dedupe by key within a batch** (last wins), because `ON CONFLICT DO UPDATE` errors when a statement touches the same row twice. **Unchanged rows are not rewritten** (`IS DISTINCT FROM`), so replays and backfills don't bloat the table.
+- **The 24h average is rounded to 10 decimals in SQL.** An unrounded numeric `avg()` can exceed `System.Decimal` precision.
+- **Gap scan:** minutes before a symbol's first candle are not gaps (that history is tail backfill's job), and a symbol with no candles returns no ranges. Bounds are floored to whole minutes.
+- **Packages:**
+  - `Npgsql.EntityFrameworkCore.PostgreSQL` 10.0.3 depends on EF Core 10.0.4 while EF Design is 10.0.13, which gave MSB3277 conflicts. Fixed with `CentralPackageTransitivePinningEnabled` and central pins for `Microsoft.EntityFrameworkCore` and `.Relational` 10.0.13.
+  - Added `Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions` to Infrastructure.
+- **New test project `tests/MarketData.Infrastructure.IntegrationTests`** (the plan put P2's tests nowhere specific). It uses one `postgres:17-alpine` container per run (xUnit v3 assembly fixture) and resets data before each test. Parallelization is off through `xunit.runner.json`, because `CollectionBehavior.DisableTestParallelization` is obsolete in xUnit 4.x.
+- **The migration bundle is ~119 MB self-contained**, against ~70 MB estimated in ADR-008. Not a problem; image size can be trimmed in P7 if needed.
+- **Running the bundle on `runtime-deps:10.0`** prints `libgssapi_krb5.so.2: cannot open shared object file` (Npgsql probing for Kerberos), but migrations succeed. **For P7:** install `libgssapi-krb5-2` in the migrator image, or accept the message.
+- **CI** now also runs `dotnet ef migrations has-pending-model-changes`.
+
+**Validation:**
+- `dotnet build MarketData.slnx`: 0 warnings, 0 errors.
+- `dotnet test --solution MarketData.slnx`: **129 passed** (97 unit + 32 Postgres integration). The integration tests cover:
+  - Upsert behaviour: idempotent replays, updates, in-batch duplicates, full precision of every column.
+  - Half-open averaging with rounding.
+  - 5m, day-boundary and Monday week-boundary buckets, with `limit`/range and newest-first order.
+  - A property-style check that SQL `date_bin` buckets equal C# `TimePeriod.Floor` for all five periods over 200 random minutes.
+  - Latest per symbol, and gap-scan range merging, start-at-first-candle and no-data cases.
+  - The symbol lifecycle (created / already active / deactivated / already inactive / reactivated with the same id / not found).
+  - Writes rolling back with the caller's transaction, and inactive symbols keeping their candles.
+  - The health check: healthy when migrated, unhealthy with "Run the migrator" on an empty DB, unhealthy when unreachable.
+- `dotnet ef migrations has-pending-model-changes`: no changes.
+- **Migration bundle:** built for `linux-x64` and `win-x64`. The linux bundle was run twice in `mcr.microsoft.com/dotnet/runtime-deps:10.0` against a fresh `postgres:17-alpine` on a Docker network:
+  - Run 1 applied `20261018160400_Initial` (with the EF migration lock).
+  - Run 2 reported "No migrations were applied. The database is already up to date."
+  - Both exited 0. Seed rows 1–3 are present, and a manual insert got id 100.

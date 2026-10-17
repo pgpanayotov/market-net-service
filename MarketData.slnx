@@ -10,6 +10,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/MarketData.Api.IntegrationTests/MarketData.Api.IntegrationTests.csproj" />
     <Project Path="tests/MarketData.Core.Tests/MarketData.Core.Tests.csproj" />
+    <Project Path="tests/MarketData.Infrastructure.IntegrationTests/MarketData.Infrastructure.IntegrationTests.csproj" />
     <Project Path="tests/MarketData.Ingestion.IntegrationTests/MarketData.Ingestion.IntegrationTests.csproj" />
   </Folder>
 </Solution>

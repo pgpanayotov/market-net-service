@@ -60,19 +60,19 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 **DoD:** 100% branch coverage on `TimePeriod` and `SmaCalculator`. DTOs round-trip through both the JSON and the DataContract XML serializers.
 
 ### P2: Persistence (ADR-002, ADR-008)
-- [ ] `MarketDataDbContext` (snake_case naming), entities `Symbol` and `Candle`. Composite PK `(symbol_id, open_time)`, `numeric(28,10)`/`numeric(38,10)`.
-- [ ] `IDesignTimeDbContextFactory` (connection from env `ConnectionStrings__MarketData`, falling back to a localhost default).
-- [ ] Migration `Initial` with `HasData` for `BTCUSDT`, `ADAUSDT`, `ETHUSDT`.
-- [ ] Repositories (Infrastructure):
+- [x] `MarketDataDbContext` (snake_case naming), entities `Symbol` and `Candle`. Composite PK `(symbol_id, open_time)`, `numeric(28,10)`/`numeric(38,10)`.
+- [x] `IDesignTimeDbContextFactory` (connection from env `ConnectionStrings__MarketData`, falling back to a localhost default).
+- [x] Migration `Initial` with `HasData` for `BTCUSDT`, `ADAUSDT`, `ETHUSDT`.
+- [x] Repositories (Infrastructure):
   - `UpsertCandlesAsync(batch)`: a single `INSERT … ON CONFLICT DO UPDATE` (multi-row VALUES or `unnest` arrays).
   - `GetBucketClosesAsync(symbolId, step, from, to, limit)`: the `date_bin` + `DISTINCT ON` query.
   - `Get24hAverageAsync(symbolId, latest)`: `avg(close)`, `count`, `min(open_time)`.
   - `GetLatestOpenTimesAsync()`: `max(open_time)` per symbol.
   - `FindMissingMinutesAsync(symbolId, window)`: the `generate_series` gap scan, merged into ranges.
   - Symbol CRUD (soft delete / reactivate).
-- [ ] `PendingMigrationsHealthCheck` (shared, used by both hosts).
-- [ ] Bundle build verified locally: `dotnet ef migrations bundle … --self-contained -r linux-x64`.
-- [ ] Integration tests (Testcontainers Postgres, fixture runs `MigrateAsync`, which is allowed in tests): upsert is idempotent, rollup at minute, day and week boundaries, gap scan, `HasData` seed present.
+- [x] `PendingMigrationsHealthCheck` (shared, used by both hosts).
+- [x] Bundle build verified locally: `dotnet ef migrations bundle … --self-contained -r linux-x64`.
+- [x] Integration tests in a new `tests/MarketData.Infrastructure.IntegrationTests` project (Testcontainers Postgres, fixture runs `MigrateAsync`, which is allowed in tests): upsert is idempotent, rollup at minute, day and week boundaries, gap scan, `HasData` seed present.
 
 **DoD:** `dotnet ef migrations has-pending-model-changes` is clean. The bundle applies to an empty DB and a re-run is a no-op.
 

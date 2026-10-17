@@ -100,6 +100,7 @@ src/
   MarketData.Client/          Console app (System.CommandLine + typed HttpClient)
 tests/
   MarketData.Core.Tests/                 Unit: period parsing, bucket alignment, SMA math
+  MarketData.Infrastructure.IntegrationTests/ Repositories, SQL rollups, gap scan, schema guard (Testcontainers Postgres)
   MarketData.Api.IntegrationTests/       WebApplicationFactory + Testcontainers Postgres
   MarketData.Ingestion.IntegrationTests/ Worker host + Testcontainers Postgres + fake stream / stubbed REST
 Dockerfile                    Multi-stage; targets: api, ingestion, migrator, client

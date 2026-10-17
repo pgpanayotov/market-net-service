@@ -30,3 +30,6 @@ jobs:
       # Testcontainers uses the runner's Docker daemon.
       - name: Test
         run: dotnet test --solution MarketData.slnx --no-build -c Release
+
+      - name: Check EF model has no un-migrated changes
+        run: dotnet ef migrations has-pending-model-changes --project src/MarketData.Infrastructure --startup-project src/MarketData.Infrastructure --configuration Release --no-build
