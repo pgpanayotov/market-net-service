@@ -352,3 +352,28 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
   - As `marketdata_migrator`, the migrator image migrated the database.
   - As `marketdata_app`, the app role could read `__EFMigrationsHistory`, run the `ON CONFLICT` symbol upsert (id 100), update, run the candle upsert, `LISTEN`/`pg_notify` (notification received) and `pg_try_advisory_lock` (true).
   - `CREATE TABLE` as `marketdata_app` was refused ("permission denied for schema public").
+
+### P9: Validation & acceptance (2026-10-18)
+
+**Setup:**
+- A fresh `git clone` of `main` (`78a592d`) in a scratch folder, run as a separate compose project, `docker compose -p marketdata-p9 up --build -d`, so the developer's own stack on :8080 was untouched.
+- Host ports `POSTGRES_PORT=55441`, `API_PORT=18100`. Live Binance (`api.binance.com`, `stream.binance.com:9443`).
+- The stack started at 19:05 UTC and everything was torn down afterwards (`down -v --rmi local`, clone deleted).
+
+| Requirement | Check | Result |
+|---|---|---|
+| **Deployment** | Clean-clone `docker compose up --build`; migrator exits 0; re-run is a no-op | ✅ Build OK. Migrator applied `Initial` and exited 0; api and ingestion were healthy within about 10s. Re-run: "No migrations were applied", exit 0. Restart count 0 for both services |
+| **F1/F2** collect & store | 10 live rows per symbol after 10 min; `ingest_lag` p95 < 5s | ✅ BTCUSDT/ETHUSDT/ADAUSDT each had **10** WS rows for 19:05–19:14. **p95 lag 0.39–0.40s**, max 0.41s. Gap scan: 0 missing minutes |
+| **F3** runtime symbols | `symbols add SOLUSDT` → rows within 2 min plus 24h backfill; `remove` → ingestion stops, history stays queryable | ✅ **Add:** Binance exchangeInfo accepted the pair, the worker got the `symbol_changes` notification and backfilled **1440** candles within **4s**; the first live candle arrived after 22s (0.44s lag). **Remove:** unsubscribed at once, **no new rows over 150s**; `24hAvgPrice` still served; admin list shows `isActive=false` with `lastCandleAt` |
+| **F4** 24h average | Value equals `avg(close)` computed in SQL | ✅ API `81607.2634652778` over 1440 points = SQL `round(avg(close),10)` over `[latest−24h, latest)` |
+| **F5** SMA | `n=20, p=5m` against Binance's own 5m kline closes; last series element = single value; `s` on/off the boundary | ✅ API `81169.1140000000` = mean of the 20 Binance `5m` closes ending at `referenceTime` 19:05. Last series element = single value. `s` = `12:00:00Z`, `12:04:59Z` and `14:04:59+02:00` all gave `referenceTime` 12:00 and the same SMA |
+| **F6** JSON/XML | `Accept` json / xml / `text/xml` / `text/csv`; errors in XML | ✅ 200 json, 200 xml, 200 text/xml, **406** for csv. 400 (keys `n`, `p`), 401 and 404 ("Unknown symbol") as `application/problem+xml` |
+| **F7** client | Every command in both formats | ✅ `avg`, `sma --points`, `sma --series --count`, `symbols list` gave identical output for `--format json` and `--format xml`; add/remove as in F3 |
+| **Resilience: worker down** | Stop the worker for 5 min → no gaps after recovery | ✅ `docker compose stop -t 0 ingestion` at 19:16:34, start at 19:21:42. The startup tail backfilled **5 candles per symbol** (19:16–19:20) → **0 missing** |
+| **Resilience: DB down** | Stop Postgres for 2 min → no gaps after recovery | ✅ Postgres down 19:22:15 → 19:24:30. API readiness was **503** during the outage and **200 eleven seconds** after Postgres returned. The worker lost its leader session with the DB, so it demoted, re-acquired the lock and ran a startup tail (2 candles per symbol); the `symbol_changes` listener reconnected. **0 missing** minutes |
+
+**Findings (none block acceptance):**
+1. **History depth limits `1d`/`1w`.** The worker seeds only `BackfillOnAdd` (24h) of history; tail backfill and the gap scan only repair *after* the first stored candle. So `sma -p 1w` returns 404 "No data available", and `sma -n 5 -p 1d --series --count 5` returns **1** value (`dataPointsUsed: 1`) until the service has run for days or weeks.
+   - **Open decision:** (C) a history-depth backfill (`MarketData:HistoryDepth`, e.g. 35 days, also filling existing symbols backwards), plus (A) always returning `count` series items, with explicit `dataPointsUsed: 0` entries instead of omitting empty windows.
+2. **The 401 ProblemDetails body has only `<status>`** (no `title`), unlike MVC-produced errors. It is cosmetic, since the client still reports "Error 401 Unauthorized" from the status line.
+3. **A DB outage costs a leadership term.** Losing Postgres also drops the worker's advisory-lock session, so it goes standby and back to leader when the DB returns. This is by design (P4); recovery took about 11s here and lost no data.

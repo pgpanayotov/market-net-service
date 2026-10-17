@@ -162,6 +162,8 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 
 Record the outcomes in `engineering-notes.md`.
 
+*Done 2026-10-18: all rows pass; see `engineering-notes.md` § P9 (open finding: history depth for `1d`/`1w`).*
+
 ---
 
 ## 3. Risks & mitigations
