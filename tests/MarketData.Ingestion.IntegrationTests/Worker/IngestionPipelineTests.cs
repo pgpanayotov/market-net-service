@@ -12,8 +12,7 @@ public sealed class IngestionPipelineTests(PostgresFixture postgres) : WorkerTes
     [Fact]
     public async Task Worker_subscribes_active_symbols_and_persists_streamed_candles()
     {
-        var worker = StartWorker();
-        worker.Rest.HasHistory = false;
+        var worker = StartWorker(configure: w => w.Rest.HasHistory = false);
         await EventuallyAsync(() => worker.Stream.SubscribedNames.SetEquals(Seeded), "subscriptions to the seeded symbols");
 
         var minute = ThisMinute.AddMinutes(-1);
@@ -141,8 +140,9 @@ public sealed class IngestionPipelineTests(PostgresFixture postgres) : WorkerTes
     [Fact]
     public async Task Readiness_fails_when_an_active_symbol_is_stale()
     {
-        var worker = StartWorker(new Dictionary<string, string> { ["MarketData:FreshnessThreshold"] = "00:00:01" });
-        worker.Rest.HasHistory = false;
+        var worker = StartWorker(
+            new Dictionary<string, string> { ["MarketData:FreshnessThreshold"] = "00:00:01" },
+            w => w.Rest.HasHistory = false);
         await EventuallyAsync(() => worker.Stream.SubscribedNames.Count == 3, "ingestion started");
 
         await EventuallyAsync(

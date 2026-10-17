@@ -437,3 +437,9 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
 **Validation:**
 - With the 1s delay still injected, the test passed. After removing the delay, the ingestion project passed 5 runs in a row (32/32 each) in Release.
 - Full suite: **257 passed** (Release, `ContinuousIntegrationBuild=true`).
+
+**Follow-up (the same test still failed on CI after `d14070c`):** a second race, this time in the tests.
+- **Cause:** the test set `worker.Rest.HasHistory = false` *after* `StartWorker()` returned. With leader election gone, `GapBackfiller` starts its startup backfill immediately. On a slow runner it called the REST stub before the flag was set, and stored 30 minutes of synthetic history, so the `Count == 1` condition could never be met.
+- **Reproduced** by delaying the flag assignment by 2s, which gave the same timeout.
+- **Fix:** `WorkerTest.StartWorker(settings, configure)` applies `configure` to the factory *before* the host starts. All four tests that disabled history now use it (pipeline, stale readiness, and both workers in the overlap test). No production code changed.
+- **Validation:** with the 2s delay injected after start, the test passed. Without it, the ingestion project passed 5 runs in a row (32/32), and the full suite passed **257** in Release with `ContinuousIntegrationBuild=true`.

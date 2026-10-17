@@ -42,9 +42,14 @@ public abstract class WorkerTest(PostgresFixture postgres) : IAsyncLifetime
         }
     }
 
-    protected WorkerFactory StartWorker(IReadOnlyDictionary<string, string>? settings = null)
+    /// <summary>
+    /// Starts a worker. <paramref name="configure"/> runs before the host starts: the startup backfill begins
+    /// immediately, so fakes such as <c>Rest.HasHistory</c> must be set first or the test races it.
+    /// </summary>
+    protected WorkerFactory StartWorker(IReadOnlyDictionary<string, string>? settings = null, Action<WorkerFactory>? configure = null)
     {
         var worker = new WorkerFactory(Postgres.ConnectionString, settings);
+        configure?.Invoke(worker);
         _workers.Add(worker);
         return worker.Start();
     }

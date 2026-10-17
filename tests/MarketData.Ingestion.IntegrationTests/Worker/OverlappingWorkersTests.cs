@@ -11,10 +11,8 @@ public sealed class OverlappingWorkersTests(PostgresFixture postgres) : WorkerTe
     [Fact]
     public async Task Two_workers_side_by_side_store_each_candle_once()
     {
-        var first = StartWorker();
-        var second = StartWorker();
-        first.Rest.HasHistory = false;
-        second.Rest.HasHistory = false;
+        var first = StartWorker(configure: w => w.Rest.HasHistory = false);
+        var second = StartWorker(configure: w => w.Rest.HasHistory = false);
         await EventuallyAsync(() => first.Stream.SubscribedNames.Count == 3 && second.Stream.SubscribedNames.Count == 3, "both workers ingesting");
 
         var minute = ThisMinute.AddMinutes(-1);
