@@ -27,7 +27,7 @@ public static class IngestionServiceCollectionExtensions
         services.AddOptions<IngestionOptions>()
             .Bind(configuration.GetSection(IngestionOptions.SectionName))
             .Validate(o => o.ChannelCapacity > 0 && o.WriteBatchSize > 0, "Channel capacity and batch size must be positive.")
-            .Validate(o => o.BackfillOnAdd > TimeSpan.Zero && o.GapScanWindow > TimeSpan.Zero, "Backfill and scan windows must be positive.")
+            .Validate(o => o.HistoryDepth > TimeSpan.Zero && o.GapScanWindow > TimeSpan.Zero, "History depth and scan window must be positive.")
             .ValidateOnStart();
 
         services.AddMarketDataPersistence(connectionString);

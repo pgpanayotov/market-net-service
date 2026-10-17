@@ -77,6 +77,9 @@ public interface ICandleQueryRepository
     /// </summary>
     Task<DateTimeOffset?> GetLatestOpenTimeAsync(int symbolId, CancellationToken cancellationToken);
 
+    /// <summary>Open time of the oldest stored candle; <c>null</c> when the symbol has no data. Used by the worker's history-depth backfill (ADR-005).</summary>
+    Task<DateTimeOffset?> GetFirstOpenTimeAsync(int symbolId, CancellationToken cancellationToken);
+
     /// <summary>Open time of the newest candle for every symbol that has data.</summary>
     Task<IReadOnlyDictionary<int, DateTimeOffset>> GetLatestOpenTimesAsync(CancellationToken cancellationToken);
 }

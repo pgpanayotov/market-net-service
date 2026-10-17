@@ -190,7 +190,7 @@ builder.Services.AddProblemDetails();           // errors also negotiated (JSON/
 ```
 - Returns `m` SMA values (default `m = min(n, 100)`), one per bucket, ending at `referenceTime` and in ascending time order. Each value is the SMA(n) of the `n` buckets ending at its `time`. The last element equals the single-value response.
 - One query fetches the last `n + m − 1` buckets. C# computes the series in O(n + m) with a sliding window sum (exact with `decimal`).
-- When fewer than `n` buckets exist for a series element, that element is still emitted with its actual `dataPointsUsed`. Elements with 0 points are omitted.
+- When fewer than `n` buckets exist for a series element, that element is still emitted with its actual `dataPointsUsed`. Elements with 0 points are kept with `dataPointsUsed: 0` and no `simpleMovingAverage`, so the series always has exactly `m` elements, oldest first (404 only when no element has data).
 - `series=false` (default) keeps the single-value shape above, so existing callers don't change. In series mode `points` is not returned (the series is the useful output). `simpleMovingAverage`/`series` are mutually exclusive in the DTO (`SmaResponse` has both, nullable; XML omits null elements).
 
 Validation: `p` codes are case-sensitive (`1M` means a month by convention, so it is rejected). `1 ≤ n ≤ 1000`, `1 ≤ count ≤ 1000` (only valid with `series=true`, otherwise 400), so a query reads at most 1,999 buckets. `s` is ISO-8601 (treated as UTC when there's no offset) and must not be in the future.
@@ -267,7 +267,8 @@ This query sits in `ICandleQueryRepository` in Infrastructure (raw SQL via `From
 | Failure | Handling |
 |---|---|
 | WS disconnect / 24h forced close | Binance.Net auto-reconnects. On `ConnectionRestored`, trigger **gap backfill** |
-| Gap in data (restart, outage, new symbol) | `GapBackfiller`: for each active symbol, `last = max(open_time)`; fetch `GET /api/v3/klines?interval=1m&startTime=last+1m` (1000/request) up to the last closed minute; upsert. Runs at startup, on reconnect, after DB recovery, and on symbol add (initial backfill capped at `MarketData:BackfillOnAdd`, default 24h) |
+| Too little history (new symbol, existing database) | **Head backfill** (ADR-005 amendment): at the start of a leader term and on symbol add, if `min(open_time)` is later than `now − MarketData:HistoryDepth` (default 35d), `GapBackfiller` fetches `[now − HistoryDepth, min(open_time))` and upserts, so long SMA windows (`p=1w`) have data. Nothing is fetched when the depth is satisfied |
+| Gap in data (restart, outage, new symbol) | `GapBackfiller`: for each active symbol, `last = max(open_time)`; fetch `GET /api/v3/klines?interval=1m&startTime=last+1m` (1000/request) up to the last closed minute; upsert. Runs at startup, on reconnect, after DB recovery, and on symbol add (initial backfill a symbol without data starts at `MarketData:HistoryDepth`, default 35d) |
 | Holes behind the newest candle (drops, partial batch failures) | **Gap scan** every 5 min, and immediately after drops or DB recovery: `generate_series` over the last 48h finds missing minutes, which are merged into ranges and fetched through REST ([ADR-005](adr/005-self-healing-ingestion.md)). Tail backfill alone can't see these |
 | DB unavailable | Writer retries with exponential backoff (Polly, max 30s). Bounded channel (10k) with `DropOldest`; dropped candles are recovered by the gap scan once the DB is back |
 | Binance REST 429/418 | Respect `Retry-After`; backfill is low-priority and resumable |

@@ -85,7 +85,7 @@ public sealed class PriceAnalysisService(
         if (valid.SeriesCount is { } count)
         {
             var series = SmaCalculator.Series(buckets, valid.Period, valid.N, count, referenceTime);
-            if (series.Count == 0)
+            if (series.All(v => v.DataPointsUsed == 0))
             {
                 return new AnalysisError.NoData(valid.Symbol.Value);
             }

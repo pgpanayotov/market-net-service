@@ -13,7 +13,10 @@ namespace MarketData.Ingestion.Backfill;
 /// <list type="bullet">
 ///   <item><b>Tail</b>: from the newest stored candle to the last closed minute. Runs at the start of a
 ///   term, after a WebSocket reconnect, after database recovery, and for each newly subscribed symbol
-///   (capped at <see cref="IngestionOptions.BackfillOnAdd"/>).</item>
+///   (a symbol without data starts at <c>now − <see cref="IngestionOptions.HistoryDepth"/></c>).</item>
+///   <item><b>Head</b>: the other end. At the start of a term and when a symbol is added, history is
+///   deepened backwards from the oldest stored candle to <c>now − HistoryDepth</c>, so long SMA windows
+///   have data from the first day and existing databases catch up too.</item>
 ///   <item><b>Scan</b>: holes behind the newest candle within <see cref="IngestionOptions.GapScanWindow"/>.
 ///   Runs every <see cref="IngestionOptions.GapScanInterval"/>, and after drops or database recovery.</item>
 /// </list>
@@ -138,14 +141,41 @@ public sealed partial class GapBackfiller(
         }
 
         var end = FloorToMinute(timeProvider.GetUtcNow());
-        var cap = end - _options.BackfillOnAdd;
+        var cap = end - _options.HistoryDepth;
         var start = latest switch
         {
             null => cap,
             { } l when reason == BackfillReason.SymbolAdded => Max(l + Minute, cap),
             { } l => l + Minute,
         };
-        return start < end ? await FetchAsync(symbol, new TimeRange(start, end), reason, cancellationToken).ConfigureAwait(false) : 0;
+        var written = start < end ? await FetchAsync(symbol, new TimeRange(start, end), reason, cancellationToken).ConfigureAwait(false) : 0;
+
+        // With no data the tail above already started at the depth. Reconnects don't re-check the head: it can't have changed.
+        if (latest is not null && reason is BackfillReason.Startup or BackfillReason.SymbolAdded)
+        {
+            written += await HeadAsync(symbol, cap, reason, cancellationToken).ConfigureAwait(false);
+        }
+
+        return written;
+    }
+
+    /// <summary>
+    /// Fetches <c>[depthStart, firstCandle)</c> when the oldest stored candle is younger than the history depth.
+    /// A symbol listed later than that gets an empty answer, so the check costs one request per term.
+    /// </summary>
+    private async Task<int> HeadAsync(SymbolInfo symbol, DateTimeOffset depthStart, BackfillReason reason, CancellationToken cancellationToken)
+    {
+        DateTimeOffset? first;
+        using (var scope = scopes.CreateScope())
+        {
+            first = await scope.ServiceProvider.GetRequiredService<ICandleQueryRepository>()
+                .GetFirstOpenTimeAsync(symbol.Id, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return first is { } f && f > depthStart
+            ? await FetchAsync(symbol, new TimeRange(depthStart, f), reason, cancellationToken).ConfigureAwait(false)
+            : 0;
     }
 
     private async Task<int> ScanAsync(SymbolInfo symbol, BackfillReason reason, CancellationToken cancellationToken)

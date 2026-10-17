@@ -40,7 +40,10 @@ public sealed class SmaResponse
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<SmaPoint>? Points { get; set; }
 
-    /// <summary>Rolling SMA values, oldest first; the last one equals the single-value result.</summary>
+    /// <summary>
+    /// Exactly <c>count</c> rolling SMA values, oldest first; the last one equals the single-value result.
+    /// Windows without data are present with <c>dataPointsUsed</c> 0 and no average.
+    /// </summary>
     [DataMember(Name = "series", Order = 8, EmitDefaultValue = false)]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<SmaSeriesItem>? Series { get; set; }
@@ -66,8 +69,10 @@ public sealed class SmaSeriesItem
     [DataMember(Name = "time", Order = 1)]
     public DateTime Time { get; set; }
 
-    [DataMember(Name = "simpleMovingAverage", Order = 2)]
-    public decimal SimpleMovingAverage { get; set; }
+    /// <summary>Omitted when the window has no data (<see cref="DataPointsUsed"/> is 0).</summary>
+    [DataMember(Name = "simpleMovingAverage", Order = 2, EmitDefaultValue = false)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? SimpleMovingAverage { get; set; }
 
     [DataMember(Name = "dataPointsUsed", Order = 3)]
     public int DataPointsUsed { get; set; }

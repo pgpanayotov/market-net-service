@@ -198,6 +198,19 @@ public class PriceAnalysisServiceTests
     }
 
     [Fact]
+    public async Task Sma_SeriesWithSparseHistory_ReturnsCountItemsWithEmptyWindows()
+    {
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
+        GivenBuckets(TimePeriod.FiveMinutes, At("2026-10-18T11:50:00Z"), At("2026-10-18T12:05:00Z"), limit: 3,
+            new BucketClose(At("2026-10-18T12:00:00Z"), 4m));
+
+        var response = (await _service.GetSmaAsync(new SmaQuery("BTCUSDT", 1, "5m", Series: true, Count: 3), Ct)).Value!;
+
+        Assert.Equal([0, 0, 1], response.Series!.Select(i => i.DataPointsUsed));
+        Assert.Equal<decimal?>([null, null, 4m], response.Series!.Select(i => i.SimpleMovingAverage));
+    }
+
+    [Fact]
     public async Task Sma_SeriesWithoutData_IsNoData()
     {
         _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));

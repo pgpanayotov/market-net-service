@@ -237,7 +237,7 @@ public static class Cli
                 TextTable.Write(
                     output,
                     ["Window end", "SMA", "Points"],
-                    values.Select(v => (IReadOnlyList<string>)[TextTable.Time(v.Time), TextTable.Price(v.SimpleMovingAverage), TextTable.Number(v.DataPointsUsed)]),
+                    values.Select(v => (IReadOnlyList<string>)[TextTable.Time(v.Time), v.SimpleMovingAverage is { } avg ? TextTable.Price(avg) : "-", TextTable.Number(v.DataPointsUsed)]),
                     rightAligned: new HashSet<int> { 1, 2 });
                 return;
             }

@@ -122,8 +122,20 @@ public class AnalysisCachingTests(ApiFixture fixture) : ApiTest(fixture)
         Assert.Equal(40m, single.SimpleMovingAverage);
         Assert.Null(series.SimpleMovingAverage);
         Assert.Null(series.Points);
-        Assert.Equal([20m, 30m, 40m], series.Series!.Select(i => i.SimpleMovingAverage));
+        Assert.Equal<decimal?>([20m, 30m, 40m], series.Series!.Select(i => i.SimpleMovingAverage));
         Assert.Equal(single.ReferenceTime, series.Series![^1].Time);
+    }
+
+    [Fact]
+    public async Task Series_WithLittleHistory_StillReturnsCountItems()
+    {
+        await SeedAsync(Minutes(Btc, Start, 10m, 20m));
+        using var client = CreateClient();
+
+        var series = await GetSmaAsync(client, "n=1&p=1m&series=true&count=4");
+
+        Assert.Equal([0, 0, 1, 1], series.Series!.Select(i => i.DataPointsUsed));
+        Assert.Equal<decimal?>([null, null, 10m, 20m], series.Series!.Select(i => i.SimpleMovingAverage));
     }
 
     [Fact]

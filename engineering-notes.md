@@ -352,3 +352,22 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
   - As `marketdata_migrator`, the migrator image migrated the database.
   - As `marketdata_app`, the app role could read `__EFMigrationsHistory`, run the `ON CONFLICT` symbol upsert (id 100), update, run the candle upsert, `LISTEN`/`pg_notify` (notification received) and `pg_try_advisory_lock` (true).
   - `CREATE TABLE` as `marketdata_app` was refused ("permission denied for schema public").
+
+### P9 follow-up: history-depth backfill and full-length SMA series (2026-10-18)
+
+**Why:** acceptance showed `SimpleMovingAverage?p=1w` returning 404 and `?n=5&p=1d&series=true&count=5` returning one item until the service had run for weeks. Tail backfill only moved forward and the gap scan ignored minutes before the first candle.
+
+**What changed:**
+- **Head backfill (ADR-005 amendment).** `MarketData:HistoryDepth` (default 35d) **replaces** `BackfillOnAdd`: one "how much history" knob instead of two that could disagree. At `Startup` and `SymbolAdded`, `GapBackfiller.TailAsync` calls a new head step: if `min(open_time)` (new `ICandleQueryRepository.GetFirstOpenTimeAsync`, raw SQL on the PK) is later than `now − HistoryDepth`, it fetches `[now − HistoryDepth, min)` through the existing paged REST client. Symbols without data are filled by the tail run, which now starts at the depth. Reconnects and DB recovery skip the head check.
+- **Series shape (ADR-006 amendment).** `SmaCalculator.Series` returns exactly `count` items; empty windows have `DataPointsUsed = 0` and a `null` average, which `SmaSeriesItem` omits in JSON and XML. 404 only when every window is empty. The client prints `-` for them.
+
+**Decisions and trade-offs:**
+- An old `BackfillOnAdd` setting is silently ignored (documented in the README). The API is unreleased, so no compatibility shim.
+- A symbol listed later than the depth costs one empty REST request per term. Accepted.
+- Holes older than the 48h scan window stay unrepaired unless they sit at the head.
+
+**Validation:**
+- `dotnet build MarketData.slnx`: 0 warnings, 0 errors. `dotnet test --solution MarketData.slnx`: **257 passed**.
+- New tests: Core (empty-window series items, service sparse history, contract JSON/XML omission), API (`Series_WithLittleHistory_StillReturnsCountItems`), console client (`-` for empty windows), ingestion integration (a symbol with only recent data is deepened to the depth; nothing is refetched when the depth is satisfied).
+- Live, `docker compose up --build` against Binance (fresh volume): all three symbols backfilled ~48.9k candles (35d) at startup. `GET /api/BTCUSDT/SimpleMovingAverage?n=5&p=1w` returned 200 with `dataPointsUsed: 5`, and `?n=5&p=1d&series=true&count=5` returned 5 items, each with 5 data points.
+- Live deepening of an existing database: deleted BTCUSDT candles older than 10 days (14,392 rows left, oldest 2026-10-08), restarted the worker, and it was back to 50,400 rows (35d exactly), oldest 2026-09-13 19:45.

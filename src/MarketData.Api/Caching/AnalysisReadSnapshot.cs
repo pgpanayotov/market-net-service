@@ -48,6 +48,9 @@ internal sealed class AnalysisReadSnapshot(ISymbolRepository symbols, ICandleQue
         CancellationToken cancellationToken) =>
         candles.GetBucketClosesAsync(symbolId, period, from, to, limit, cancellationToken);
 
+    public Task<DateTimeOffset?> GetFirstOpenTimeAsync(int symbolId, CancellationToken cancellationToken) =>
+        candles.GetFirstOpenTimeAsync(symbolId, cancellationToken);
+
     public Task<IReadOnlyDictionary<int, DateTimeOffset>> GetLatestOpenTimesAsync(CancellationToken cancellationToken) =>
         candles.GetLatestOpenTimesAsync(cancellationToken);
 

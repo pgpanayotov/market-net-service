@@ -70,6 +70,18 @@ public class ContractSerializationTests
     }
 
     [Fact]
+    public void EmptySeriesWindow_OmitsTheAverage_InJsonAndXml()
+    {
+        var sma = SeriesSma();
+        sma.Series = [new SmaSeriesItem { Time = Ref, SimpleMovingAverage = null, DataPointsUsed = 0 }];
+
+        Assert.Contains("""{"time":"2026-10-18T12:05:00Z","dataPointsUsed":0}""", JsonSerializer.Serialize(sma, Json), StringComparison.Ordinal);
+        var xml = ToXml(sma);
+        Assert.Contains("<series><item><time>2026-10-18T12:05:00Z</time><dataPointsUsed>0</dataPointsUsed></item></series>", xml, StringComparison.Ordinal);
+        Assert.DoesNotContain("i:nil", xml, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SymbolList_Xml_UsesNamedCollection_AndJsonIsAnArray()
     {
         var list = new SymbolList([new SymbolDto { Name = "ETHUSDT", IsActive = true, CreatedAt = Ref }]);

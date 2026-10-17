@@ -20,7 +20,7 @@ The review found three timing problems with anchoring at wall-clock `now`:
    - SMA: `effectiveRef = floor(min(s ?? now, latest), p)`. A bucket counts only when it is complete in storage, never a half-written one.
 2. **Bucket value** is the close of the bucket's last 1m candle. Days start at 00:00 UTC. Weeks start Monday 00:00 UTC (date_bin origin `2000-01-03Z`, the same as Binance `1w`).
 3. **Single value (default):** mean of the last `n` bucket closes before `effectiveRef`, plus `dataPointsUsed` and optional `points`.
-4. **Series (`series=true`):** `count` values (default **`min(n, 100)`**, max 1000, fixes R7) in ascending time order. Each is SMA(n) ending at its bucket. One query fetches `n + count − 1` buckets, and the series is computed with an O(n + count) sliding `decimal` sum. Elements with 0 points are omitted. The last element equals the single-value result.
+4. **Series (`series=true`):** `count` values (default **`min(n, 100)`**, max 1000, fixes R7) in ascending time order. Each is SMA(n) ending at its bucket. One query fetches `n + count − 1` buckets, and the series is computed with an O(n + count) sliding `decimal` sum. Elements with 0 points are kept (see the amendment below): the series always has exactly `count` elements. The last element equals the single-value result.
 5. **Cache keyed on the data version (fixes R3).** The cache key is `(endpoint, symbol, parameters, latestOpenTime)`. Each request first reads `latestOpenTime` (one index probe), so a newly stored candle automatically means a new key and nothing has to be invalidated. Entries expire 60s after creation, which bounds how long a gap repaired *behind* the newest candle (ADR-005) can be served stale. Results whose window ends more than 48h before `latest` (outside the gap-scan window) don't change, and are cached for 1h (sliding). *(Amended in P3: replaced per-symbol change tokens fired by `candles_written` notifications.)*
 6. **Status codes:** unknown symbol → 404 `"Unknown symbol"`. Known symbol with no data at all → 404 `"No data available"`. Partial data → 200 with `dataPointsUsed`/`isFullPeriod`.
 
@@ -64,3 +64,10 @@ For an analysis API, *correct and explainable* beats *wall-clock fresh*. C trade
 3. [x] API cache keyed by `latestOpenTime`: 60s absolute expiry, 1h sliding for windows older than 48h.
 4. [x] Unit tests: `s` on and off boundaries, `s > latest`, week boundary, gaps, series with partial windows at the start of history, `count` without `series` → 400.
 5. [x] README: document A1/A2 and the anchoring rule with an example.
+
+## Amendment 2026-10-18: series always has `count` elements
+Point 4 said elements with 0 points are omitted. P9 showed this makes `?n=5&p=1d&series=true&count=5` return one element on a young database, which reads as a bug and forces clients to infer which windows are missing. Now:
+- `SmaCalculator.Series` returns exactly `count` values, oldest first. A window without data is an element with `dataPointsUsed: 0` and **no** `simpleMovingAverage` (`SmaSeriesItem.SimpleMovingAverage` is nullable and omitted from JSON and XML when null, not emitted as `null`/`nil`).
+- 404 `"No data available"` is returned only when no window of the series has data.
+- The last element still equals the single-value result. The console client prints `-` for an empty window.
+- Single-value responses are unchanged. This changes the series shape (extra elements, optional average), which is acceptable because the API is not yet released.
