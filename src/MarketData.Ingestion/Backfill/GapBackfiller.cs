@@ -2,7 +2,6 @@ using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 using MarketData.Infrastructure;
 using MarketData.Infrastructure.Binance;
-using MarketData.Ingestion.Leadership;
 using MarketData.Ingestion.Pipeline;
 using Microsoft.Extensions.Options;
 
@@ -12,9 +11,9 @@ namespace MarketData.Ingestion.Backfill;
 /// Makes the store converge to complete (ADR-005), one request at a time:
 /// <list type="bullet">
 ///   <item><b>Tail</b>: from the newest stored candle to the last closed minute. Runs at the start of a
-///   term, after a WebSocket reconnect, after database recovery, and for each newly subscribed symbol
+///   at startup, after a WebSocket reconnect, after database recovery, and for each newly subscribed symbol
 ///   (a symbol without data starts at <c>now − <see cref="IngestionOptions.HistoryDepth"/></c>).</item>
-///   <item><b>Head</b>: the other end. At the start of a term and when a symbol is added, history is
+///   <item><b>Head</b>: the other end. At startup and when a symbol is added, history is
 ///   deepened backwards from the oldest stored candle to <c>now − HistoryDepth</c>, so long SMA windows
 ///   have data from the first day and existing databases catch up too.</item>
 ///   <item><b>Scan</b>: holes behind the newest candle within <see cref="IngestionOptions.GapScanWindow"/>.
@@ -30,7 +29,7 @@ public sealed partial class GapBackfiller(
     IngestionMetrics metrics,
     IOptions<IngestionOptions> options,
     TimeProvider timeProvider,
-    ILogger<GapBackfiller> logger) : ILeaderService
+    ILogger<GapBackfiller> logger) : BackgroundService
 {
     private static readonly TimeSpan Minute = MarketDataConstants.CandleInterval;
     private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromSeconds(1);
@@ -38,7 +37,7 @@ public sealed partial class GapBackfiller(
 
     private readonly IngestionOptions _options = options.Value;
 
-    public async Task RunAsync(CancellationToken leadershipToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         scheduler.RequestTail(BackfillReason.Startup);
         scheduler.RequestScan(BackfillReason.Startup);
@@ -51,7 +50,7 @@ public sealed partial class GapBackfiller(
                 var wait = nextScan - timeProvider.GetUtcNow();
                 if (wait > TimeSpan.Zero)
                 {
-                    await scheduler.WaitAsync(wait, timeProvider, leadershipToken).ConfigureAwait(false);
+                    await scheduler.WaitAsync(wait, timeProvider, stoppingToken).ConfigureAwait(false);
                 }
 
                 if (timeProvider.GetUtcNow() >= nextScan)
@@ -68,7 +67,7 @@ public sealed partial class GapBackfiller(
                         nextScan = timeProvider.GetUtcNow() + _options.GapScanInterval;
                     }
 
-                    if (!await RunAsync(request, leadershipToken).ConfigureAwait(false))
+                    if (!await RunAsync(request, stoppingToken).ConfigureAwait(false))
                     {
                         failed = true;
                         scheduler.Request(request);
@@ -79,16 +78,16 @@ public sealed partial class GapBackfiller(
                 failures = failed ? failures + 1 : 0;
                 if (failed)
                 {
-                    await Task.Delay(ExponentialBackoff.Delay(failures - 1, InitialRetryDelay, MaxRetryDelay), timeProvider, leadershipToken).ConfigureAwait(false);
+                    await Task.Delay(ExponentialBackoff.Delay(failures - 1, InitialRetryDelay, MaxRetryDelay), timeProvider, stoppingToken).ConfigureAwait(false);
                 }
             }
         }
-        catch (OperationCanceledException) when (leadershipToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
         finally
         {
-            // Requests of an ended term are moot; the next term starts with its own startup tail and scan.
+            // Pending requests die with the process; the next start begins with its own tail and scan.
             scheduler.Clear();
         }
     }
@@ -161,7 +160,7 @@ public sealed partial class GapBackfiller(
 
     /// <summary>
     /// Fetches <c>[depthStart, firstCandle)</c> when the oldest stored candle is younger than the history depth.
-    /// A symbol listed later than that gets an empty answer, so the check costs one request per term.
+    /// A symbol listed later than that gets an empty answer, so the check costs one request per start.
     /// </summary>
     private async Task<int> HeadAsync(SymbolInfo symbol, DateTimeOffset depthStart, BackfillReason reason, CancellationToken cancellationToken)
     {

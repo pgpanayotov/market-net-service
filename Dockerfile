@@ -71,7 +71,7 @@ USER $APP_UID
 # Health endpoints only (Kestrel:Endpoints:Health); not meant to be published outside the network.
 ENV Kestrel__Endpoints__Health__Url=http://+:8081
 EXPOSE 8081
-# Ready = healthy leader, or standby (a second replica waits on the advisory lock and is still "ready").
+# Ready = database, schema, WebSocket, listener and fresh candles all healthy.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=3 \
   CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081 && printf "GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && head -n1 <&3 | grep -q " 200 "'
 ENTRYPOINT ["dotnet", "MarketData.Ingestion.dll"]

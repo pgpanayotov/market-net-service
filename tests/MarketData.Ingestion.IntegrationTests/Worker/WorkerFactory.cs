@@ -2,7 +2,6 @@ using System.Net.Http.Json;
 using MarketData.Infrastructure.Binance;
 using MarketData.Ingestion.Health;
 using MarketData.Ingestion.IntegrationTests.Fakes;
-using MarketData.Ingestion.Leadership;
 using MarketData.Ingestion.Symbols;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -14,8 +13,8 @@ namespace MarketData.Ingestion.IntegrationTests.Worker;
 
 /// <summary>
 /// One real worker host (the app's own <c>Program</c>) on the test database, with Binance replaced by
-/// <see cref="FakeMarketDataStream"/> and <see cref="StubKlineRestClient"/>. Several factories can run
-/// side by side as competing workers.
+/// <see cref="FakeMarketDataStream"/> and <see cref="StubKlineRestClient"/>. A second factory on the same
+/// database exercises the single-instance guard.
 /// </summary>
 public sealed class WorkerFactory(string connectionString, IReadOnlyDictionary<string, string>? settings = null) : WebApplicationFactory<Program>
 {
@@ -25,8 +24,6 @@ public sealed class WorkerFactory(string connectionString, IReadOnlyDictionary<s
         ["MarketData:HistoryDepth"] = "00:30:00",
         ["MarketData:GapScanInterval"] = "01:00:00",
         ["MarketData:ReconcileInterval"] = "01:00:00",
-        ["MarketData:LeaderRetryInterval"] = "00:00:00.300",
-        ["MarketData:LeaderCheckInterval"] = "00:00:00.200",
         ["MarketData:WriteBatchWindow"] = "00:00:00.100",
         ["Logging:LogLevel:Default"] = "Warning",
     };
@@ -34,8 +31,6 @@ public sealed class WorkerFactory(string connectionString, IReadOnlyDictionary<s
     public FakeMarketDataStream Stream { get; } = new();
 
     public StubKlineRestClient Rest { get; } = new(TimeProvider.System);
-
-    public LeadershipState Leadership => Services.GetRequiredService<LeadershipState>();
 
     public SymbolChangeListener Listener => Services.GetRequiredService<SymbolChangeListener>();
 

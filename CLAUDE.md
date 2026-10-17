@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 All phases P0–P9 are done on `main` (P9 acceptance passed; see `engineering-notes.md` § P9), plus the P9 follow-up: `MarketData:HistoryDepth` head backfill (35d) and SMA series that always return `count` items. The code follows these documents:
 - `docs/requirements.md`: the assignment spec (.NET 10 service that collects Binance Spot prices and offers analysis endpoints, plus a console client).
 - `docs/system-design.md`: the full design (data model, API contracts, pipelines, deployment).
-- `docs/adr/`: accepted decisions (ADR-001, 002, 004–008; ADR-003 is superseded). Don't contradict an accepted ADR. If a change is needed, write a new ADR that supersedes it and update `docs/system-design.md` and the index in `docs/adr/README.md`.
+- `docs/adr/`: accepted decisions (ADR-001, 002, 004–009; ADR-003 is superseded, and ADR-009 supersedes ADR-007's leader election). Don't contradict an accepted ADR. If a change is needed, write a new ADR that supersedes it and update `docs/system-design.md` and the index in `docs/adr/README.md`.
 
 The project skill `.claude/skills/binance-net` covers idiomatic Binance.Net usage (WebSocket subscriptions, REST klines/exchangeInfo, result handling). Use it for any Binance code.
 
@@ -30,7 +30,6 @@ More commands:
 docker compose up --build                                                         # postgres → migrator → ingestion + api (:8080)
 docker compose run --rm migrator                                                  # apply migrations only
 docker compose run --rm client avg BTCUSDT                                        # console client
-docker compose up -d --scale ingestion=2                                          # second worker = hot standby (advisory lock)
 dotnet ef migrations add <Name> --project src/MarketData.Infrastructure --startup-project src/MarketData.Infrastructure
 dotnet run --project src/MarketData.Api                                          # API (Development: dev-admin-key, local DB)
 dotnet run --project src/MarketData.Ingestion                                    # worker; health on :8081
@@ -50,7 +49,7 @@ Record each phase's decisions, deviations and validation results in `engineering
 
 Three runtime processes share one PostgreSQL database:
 
-- **`MarketData.Ingestion`** (Worker Service; one active instance, guarded by `pg_try_advisory_lock`; others wait on standby). It subscribes to Binance `<symbol>@kline_1m` through the combined-stream WebSocket and persists only **closed** 1-minute candles to `candles_1m`.
+- **`MarketData.Ingestion`** (Worker Service; run **one** replica, no leader election per ADR-009; a brief overlap during deploys is harmless because writes are idempotent). It subscribes to Binance `<symbol>@kline_1m` through the combined-stream WebSocket and persists only **closed** 1-minute candles to `candles_1m`.
   - Pipeline: collector → `Channel<Candle>` → batched upsert `CandleWriter`.
   - `GapBackfiller` makes the store converge to complete. It does tail backfill from REST `/api/v3/klines`, plus a 48h `generate_series` gap scan. Lossy in-memory paths are fine because of this, so don't add a durable queue.
 - **`MarketData.Api`** (stateless, horizontally scalable, MVC controllers). Analysis endpoints and admin symbol endpoints. Never opens Binance WebSockets.

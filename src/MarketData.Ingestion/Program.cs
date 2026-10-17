@@ -1,7 +1,6 @@
 using MarketData.Infrastructure;
 using MarketData.Ingestion;
 using MarketData.Ingestion.Health;
-using MarketData.Ingestion.Leadership;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 
@@ -26,9 +25,6 @@ builder.Services.AddOpenTelemetry()
     });
 
 var app = builder.Build();
-
-var leadership = app.Services.GetRequiredService<LeadershipState>();
-app.Services.GetRequiredService<IngestionMetrics>().ObserveLeadership(() => leadership.IsLeader ? 1 : 0);
 
 app.MapIngestionHealthEndpoints();
 await app.RunAsync();

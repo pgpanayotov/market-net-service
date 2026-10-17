@@ -3,7 +3,6 @@
 #
 #   docker compose up --build -d
 #   docker compose run --rm client avg BTCUSDT
-#   docker compose up -d --scale ingestion=2      # second worker waits as hot standby
 #
 # Settings come from .env (see .env.example); every value has a local default.
 

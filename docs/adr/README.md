@@ -10,8 +10,9 @@ Decisions behind [system-design.md](../system-design.md). New decisions get the 
 | [004](004-mvc-controllers-for-content-negotiation.md) | MVC controllers + XML formatters for content negotiation | Accepted |
 | [005](005-self-healing-ingestion.md) | Self-healing ingestion: REST backfill + gap scan instead of a durable queue | Accepted |
 | [006](006-analysis-semantics.md) | Analysis semantics: anchor at latest data, complete buckets, optional series | Accepted |
-| [007](007-separate-ingestion-worker-listen-notify.md) | Separate ingestion worker; Postgres LISTEN/NOTIFY for cross-process signals | Accepted |
+| [007](007-separate-ingestion-worker-listen-notify.md) | Separate ingestion worker; Postgres LISTEN/NOTIFY for cross-process signals | Accepted; leadership superseded by 009 |
 | [008](008-migration-bundle-init-container.md) | Apply schema with an EF Core migration bundle run as an init container | Accepted |
+| [009](009-single-ingestion-replica-no-leader-election.md) | One ingestion replica, no leader election | Accepted |
 
 ## Design review findings (2026-10-18)
 

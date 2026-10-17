@@ -23,7 +23,7 @@ Source: [requirements.md](requirements.md). Status: proposed, before implementat
 - **Latency:** analysis endpoints p95 < 100 ms for a 24h window; < 500 ms for the largest SMA (`n=1000, p=1w`).
 - **Freshness:** stored data at most about 1 minute behind the market.
 - **Completeness:** no lasting gaps after WebSocket disconnects or DB outages (self-healing).
-- **Availability:** the API scales horizontally. Ingestion has one active instance (an optional hot standby takes over through an advisory lock). API and ingestion fail independently. Restarts must not lose data.
+- **Availability:** the API scales horizontally. Ingestion runs one replica, which the orchestrator restarts on failure; the startup backfill repairs the gap ([ADR-009](adr/009-single-ingestion-replica-no-leader-election.md)). API and ingestion fail independently. Restarts must not lose data.
 - **Cost/ops:** runs locally with `docker compose up` and no external dependencies apart from Binance.
 
 ### 1.3 Constraints
@@ -57,7 +57,7 @@ The deciding advantage is that the same 1m candles exist on the REST endpoint `G
  wss://stream.binance.com:9443/stream        (tail backfill + gap scan)
             │                                          ▲
             ▼                                          │
- ┌──────────────── MarketData.Ingestion (Worker, 1 active; pg_try_advisory_lock) ─────────────────┐
+ ┌──────────────── MarketData.Ingestion (Worker, 1 replica; idempotent writes) ───────────────────┐
  │  BinanceStreamCollector ──Channel<Candle>──► CandleWriter ──┐        GapBackfiller ────────────┘ │
  │          ▲                                  (batched upsert)│                                    │
  │          │ subscribe/unsubscribe                            │                                    │
@@ -96,7 +96,7 @@ src/
   MarketData.Infrastructure/  EF Core DbContext + migrations + IDesignTimeDbContextFactory (used by the bundle),
                               Binance.Net adapters, repositories, raw SQL rollups, PgNotificationListener/Publisher
   MarketData.Api/             ASP.NET Core host: controllers, analysis cache, health checks
-  MarketData.Ingestion/       Worker Service: collector, writer, gap backfiller, SymbolChangeListener, leader lock,
+  MarketData.Ingestion/       Worker Service: collector, writer, gap backfiller, SymbolChangeListener (plain hosted services),
                               minimal /health endpoints on internal port 8081
   MarketData.Client/          Console app (System.CommandLine + typed HttpClient)
 tests/
@@ -249,7 +249,7 @@ LIMIT @limit;   -- n, or n + count − 1 for series=true
 This query sits in `ICandleQueryRepository` in Infrastructure (raw SQL via `FromSql`/Dapper-style projection). Core only sees `IReadOnlyList<BucketClose>`, which keeps the bucket math unit-testable.
 
 ### 6.3 Ingestion pipeline (`MarketData.Ingestion`)
-0. **Leadership:** at start the worker takes `pg_try_advisory_lock(<const>)` on a dedicated connection. If it doesn't get the lock, it stays in standby (readiness reports `standby`) and retries every 10s. Only the leader runs steps 1–4.
+0. **One replica, no leader election** ([ADR-009](adr/009-single-ingestion-replica-no-leader-election.md)). Steps 1–4 are ordinary hosted services. Two workers overlapping for a few seconds during a deploy is harmless: writes are idempotent upserts.
 1. **`BinanceStreamCollector`** (BackgroundService) loads active symbols, then calls `SubscribeToKlineUpdatesAsync(symbols, KlineInterval.OneMinute, …)`. Binance.Net multiplexes these over the combined-stream connection.
 2. The callback filters `Data.Final == true` and maps to `Candle`, then `channel.Writer.TryWrite(candle)`. The callback does **no I/O**.
 3. **`CandleWriter`** reads the channel in batches (up to 500 rows or 1s), upserts in a single statement, and updates `lastCandleAt` in memory for health and metrics. It sends no notification: the API reads the newest candle per request (§6.4).
@@ -267,7 +267,7 @@ This query sits in `ICandleQueryRepository` in Infrastructure (raw SQL via `From
 | Failure | Handling |
 |---|---|
 | WS disconnect / 24h forced close | Binance.Net auto-reconnects. On `ConnectionRestored`, trigger **gap backfill** |
-| Too little history (new symbol, existing database) | **Head backfill** (ADR-005 amendment): at the start of a leader term and on symbol add, if `min(open_time)` is later than `now − MarketData:HistoryDepth` (default 35d), `GapBackfiller` fetches `[now − HistoryDepth, min(open_time))` and upserts, so long SMA windows (`p=1w`) have data. Nothing is fetched when the depth is satisfied |
+| Too little history (new symbol, existing database) | **Head backfill** (ADR-005 amendment): at worker startup and on symbol add, if `min(open_time)` is later than `now − MarketData:HistoryDepth` (default 35d), `GapBackfiller` fetches `[now − HistoryDepth, min(open_time))` and upserts, so long SMA windows (`p=1w`) have data. Nothing is fetched when the depth is satisfied |
 | Gap in data (restart, outage, new symbol) | `GapBackfiller`: for each active symbol, `last = max(open_time)`; fetch `GET /api/v3/klines?interval=1m&startTime=last+1m` (1000/request) up to the last closed minute; upsert. Runs at startup, on reconnect, after DB recovery, and on symbol add (initial backfill a symbol without data starts at `MarketData:HistoryDepth`, default 35d) |
 | Holes behind the newest candle (drops, partial batch failures) | **Gap scan** every 5 min, and immediately after drops or DB recovery: `generate_series` over the last 48h finds missing minutes, which are merged into ranges and fetched through REST ([ADR-005](adr/005-self-healing-ingestion.md)). Tail backfill alone can't see these |
 | DB unavailable | Writer retries with exponential backoff (Polly, max 30s). Bounded channel (10k) with `DropOldest`; dropped candles are recovered by the gap scan once the DB is back |
@@ -275,7 +275,7 @@ This query sits in `ICandleQueryRepository` in Infrastructure (raw SQL via `From
 | Invalid symbol on add | API validates against `exchangeInfo` (cached 1h) before writing |
 | Worker's listener connection lost | Reconnect with exponential backoff, then `LISTEN` → full reconcile. Missed notifications only delay convergence |
 | Worker down | Reads keep working on existing data; admin changes are persisted and applied on worker start (reconcile); gaps are backfilled. Data staleness alert fires |
-| Two worker replicas | Only the advisory-lock holder ingests; the other is a hot standby |
+| Two worker replicas (e.g. a rolling deploy) | Both ingest; idempotent upserts store each candle once. Costs an extra socket and duplicate REST calls while it lasts |
 | Schema behind the code | Startup guard (`GetPendingMigrationsAsync`) fails readiness with "schema behind: run migrator" |
 
 Because backfill restores anything lost, the system tolerates restarts and transient failures without exactly-once delivery.
@@ -299,17 +299,17 @@ It parses JSON or XML into the shared DTOs and prints a table. ProblemDetails (J
 
 **Scaling path.**
 - *API reads:* stateless and horizontally scalable. No `LISTEN` connection per replica; each request costs one extra index probe (`max(open_time)`).
-- *Ingestion:* one active worker is enough well past 100 symbols. A standby replica gives fast failover.
-- *Symbols > 1024:* shard subscriptions across several WS connections (Binance limit per connection). Replace the single advisory lock with per-shard locks and assign symbols by hash (ADR-007).
+- *Ingestion:* one worker is enough well past 100 symbols. If it dies, a restart plus the startup tail backfill repair the gap.
+- *Symbols > 1024 or per-group isolation:* assign symbols to workers (static `symbol_id % N`, or per-symbol locks/leases reclaimed in the 60s reconcile) rather than electing a leader (ADR-009). Workers behind one NAT share Binance per-IP limits.
 
 **Health & monitoring.**
 - **API** `/health/live`, `/health/ready`: DB reachable, no pending migrations.
-- **Ingestion** (internal port 8081) `/health/live`, `/health/ready`: DB reachable, no pending migrations, role `leader|standby`. For the leader also: WS connected, `symbol_changes` listener connected, `max(lastCandleAt)` < 2 min for every active symbol.
+- **Ingestion** (internal port 8081) `/health/live`, `/health/ready`: DB reachable, no pending migrations, WS connected, `symbol_changes` listener connected, and the newest candle under 2 min old for every active symbol (with that much grace after start or subscribe).
 - OpenTelemetry metrics (meter `MarketData`; a Prometheus exporter appends `_total` to counters):
-  - Ingestion: `marketdata.candles.ingested{symbol}`, `marketdata.ingest.lag` (s, histogram; `received_at − close_time`), `marketdata.ws.reconnects`, `marketdata.backfill.candles{symbol,reason}`, `marketdata.channel.depth` (gauge), `marketdata.channel.dropped`, `marketdata.writer.failures`, `marketdata.gap.minutes{symbol}` (gauge), `marketdata.worker.is_leader` (gauge).
+  - Ingestion: `marketdata.candles.ingested{symbol}`, `marketdata.ingest.lag` (s, histogram; `received_at − close_time`), `marketdata.ws.reconnects`, `marketdata.backfill.candles{symbol,reason}`, `marketdata.channel.depth` (gauge), `marketdata.channel.dropped`, `marketdata.writer.failures`, `marketdata.gap.minutes{symbol}` (gauge).
   - Shared: `marketdata.pg_listener.reconnects{channel}`, `marketdata.notifications.received{channel,outcome}`.
   - API: `marketdata.analysis_cache.lookups{endpoint,result}`, plus ASP.NET Core and HttpClient instrumentation.
-- Alert ideas: data staleness > 3 min, reconnects > 5/h, backfill failing, no leader for > 1 min, migrator job failed.
+- Alert ideas: data staleness > 3 min, reconnects > 5/h, backfill failing, worker not ready for > 2 min, migrator job failed.
 - Structured logging (Serilog/console JSON), with symbol in scope.
 
 ---
@@ -326,7 +326,7 @@ One multi-stage `Dockerfile` (`sdk:10.0` build stage) with three service targets
 [`docker-compose.yml`](../docker-compose.yml) (implemented in P7):
 - **`postgres`** (`postgres:17-alpine`): named volume `pgdata`, `pg_isready` healthcheck.
 - **`migrator`**: `restart: "no"`, `command: ["--connection", …]`, waits for `postgres: service_healthy`.
-- **`ingestion`** and **`api`**: both wait for `migrator: service_completed_successfully`. The api is published on `${API_PORT:-8080}`; the ingestion health port (8081) stays internal. `docker compose up -d --scale ingestion=2` runs a hot standby.
+- **`ingestion`** and **`api`**: both wait for `migrator: service_completed_successfully`. The api is published on `${API_PORT:-8080}`; the ingestion health port (8081) stays internal.
 - **`client`**: `profiles: [tools]`, so it runs on demand: `docker compose run --rm client avg BTCUSDT`.
 - **Settings** come from `.env` (see [`.env.example`](../.env.example)) with local defaults for every value:
   - `POSTGRES_*`, `ADMIN_API_KEY`, `API_PORT`;
@@ -350,7 +350,7 @@ The README covers compose, local, k8s, roles and backfill behaviour.
 | Decision | Gain | Cost | Revisit when |
 |---|---|---|---|
 | Store 1m klines, not ticks | Small data, exact buckets, REST backfill | No sub-minute resolution; "average" = time-weighted | Sub-minute analytics needed → add `@aggTrade` table |
-| Separate ingestion worker (ADR-007) | API scales out; isolated failures and deploys | Two deployables; admin changes apply asynchronously | Sharding needed past 1024 streams → per-shard advisory locks |
+| Separate ingestion worker (ADR-007) | API scales out; isolated failures and deploys | Two deployables; admin changes apply asynchronously | Sharding needed past 1024 streams → assign symbols to workers (ADR-009) |
 | Postgres `LISTEN/NOTIFY` for admin changes only | No new infrastructure; transactional with the admin write | At-most-once (covered by reconcile); the worker's listener needs a session-mode connection | Durable or high-volume events needed → outbox + broker |
 | Migration bundle as init container (ADR-008) | One explicit, lock-protected schema step; apps run with DML-only rights | Extra Docker stage and ordering config; expand/contract discipline | Long-running migrations → separate approved Job |
 | Seed symbols through `HasData` | Deterministic; no startup writes | Changing defaults needs a migration (or just the admin API) | — |
@@ -375,7 +375,7 @@ The README covers compose, local, k8s, roles and backfill behaviour.
 - **Unit:** `TimePeriod` parsing/alignment (edge cases: week boundaries, `s` exactly on a boundary, DST-irrelevant UTC), SMA with gaps, rolling-series sliding window (last element equals the single SMA; partial windows at the start of history), request validation (`count` without `series=true` gives 400).
 - **Integration:** Testcontainers Postgres; the fixture applies migrations with `MigrateAsync()` (**test code only**) or runs the built bundle.
   - **API** (`WebApplicationFactory`): JSON vs XML vs 406, ProblemDetails in XML, admin writes emit `symbol_changes` (and none on rollback), a newly stored candle changes the cache key (no stale result after the minute), readiness fails on pending migrations.
-  - **Ingestion** (worker host + `FakeMarketDataStream` + stubbed REST): a `symbol_changes` notification subscribes or unsubscribes, reconcile after a listener drop, idempotent upsert, gap backfill, the advisory lock keeps a second worker in standby.
+  - **Ingestion** (worker host + `FakeMarketDataStream` + stubbed REST): a `symbol_changes` notification subscribes or unsubscribes, reconcile after a listener drop, idempotent upsert, gap backfill, two overlapping workers store each candle once.
   - **End to end:** both hosts on one container: admin add through the API leads to ingestion and then to analysis results.
 - **Client:** run against the test server and check output for both formats.
 - **Manual:** `docker compose up`, wait 5 min, call both endpoints with `curl -H "Accept: application/xml"`.

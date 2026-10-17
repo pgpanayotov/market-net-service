@@ -16,7 +16,7 @@ public sealed class SymbolChangesTests(PostgresFixture postgres) : WorkerTest(po
     public async Task Added_symbol_is_subscribed_and_backfilled_and_removed_symbol_is_unsubscribed()
     {
         var worker = StartWorker();
-        await EventuallyAsync(() => worker.Listener.IsListening && worker.Stream.SubscribedNames.Count == 3, "a listening leader");
+        await EventuallyAsync(() => worker.Listener.IsListening && worker.Stream.SubscribedNames.Count == 3, "a listening worker");
 
         var sol = await ChangeAsync("SOLUSDT", SymbolChangeOperation.Add);
 
@@ -35,7 +35,7 @@ public sealed class SymbolChangesTests(PostgresFixture postgres) : WorkerTest(po
     public async Task Stale_or_duplicate_hints_are_checked_against_the_database()
     {
         var worker = StartWorker();
-        await EventuallyAsync(() => worker.Listener.IsListening && worker.Stream.SubscribedNames.Count == 3, "a listening leader");
+        await EventuallyAsync(() => worker.Listener.IsListening && worker.Stream.SubscribedNames.Count == 3, "a listening worker");
 
         // An "add" for a symbol that is not active in the database, and a "remove" for one that is: both are ignored.
         await NotifyOnlyAsync(new SymbolChangedPayload(SymbolChangeOperation.Add, 999, "XRPUSDT", DateTimeOffset.UtcNow));

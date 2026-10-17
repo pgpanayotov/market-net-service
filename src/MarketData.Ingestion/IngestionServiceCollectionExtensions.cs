@@ -3,14 +3,10 @@ using MarketData.Infrastructure.Binance;
 using MarketData.Infrastructure.Notifications;
 using MarketData.Ingestion.Backfill;
 using MarketData.Ingestion.Health;
-using MarketData.Ingestion.Leadership;
 using MarketData.Ingestion.Pipeline;
 using MarketData.Ingestion.Symbols;
 
 namespace MarketData.Ingestion;
-
-/// <summary>The worker's database connection string (<c>ConnectionStrings:MarketData</c>), for its dedicated sessions.</summary>
-public sealed record IngestionConnection(string ConnectionString);
 
 public static class IngestionServiceCollectionExtensions
 {
@@ -33,22 +29,20 @@ public static class IngestionServiceCollectionExtensions
         services.AddMarketDataPersistence(connectionString);
         services.AddBinanceMarketData(configuration);
 
-        services.AddSingleton(new IngestionConnection(connectionString));
         services.AddSingleton(new PgListenerSettings(connectionString));
         services.AddSingleton<IngestionMetrics>();
-        services.AddSingleton<LeadershipState>();
         services.AddSingleton<IngestionState>();
         services.AddSingleton<BackfillScheduler>();
         services.AddSingleton<CandlePipe>();
         services.AddSingleton<SymbolSubscriptionManager>();
 
-        // Leader-only services: started and stopped by LeaderLock, never by the host directly.
+        // Plain hosted services: no leader election (ADR-009). Two workers overlapping for a few seconds
+        // during a deploy is safe, because every write is an idempotent upsert.
         services.AddSingleton<SymbolChangeListener>();
-        services.AddSingleton<ILeaderService>(sp => sp.GetRequiredService<SymbolChangeListener>());
-        services.AddSingleton<ILeaderService, BinanceStreamCollector>();
-        services.AddSingleton<ILeaderService, CandleWriter>();
-        services.AddSingleton<ILeaderService, GapBackfiller>();
-        services.AddHostedService<LeaderLock>();
+        services.AddHostedService(sp => sp.GetRequiredService<SymbolChangeListener>());
+        services.AddHostedService<BinanceStreamCollector>();
+        services.AddHostedService<CandleWriter>();
+        services.AddHostedService<GapBackfiller>();
 
         services.AddIngestionHealthChecks();
         return services;

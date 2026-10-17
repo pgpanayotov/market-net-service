@@ -1,7 +1,6 @@
 using MarketData.Core.Domain;
 using MarketData.Infrastructure.Binance;
 using MarketData.Ingestion.Backfill;
-using MarketData.Ingestion.Leadership;
 using MarketData.Ingestion.Symbols;
 using Microsoft.Extensions.Options;
 
@@ -11,7 +10,7 @@ namespace MarketData.Ingestion.Pipeline;
 /// Feeds closed candles from the stream into <see cref="CandlePipe"/> (the callback does no I/O), turns
 /// reconnects into a tail backfill, and reconciles subscriptions with the database on start and every
 /// <see cref="IngestionOptions.ReconcileInterval"/>, in case a <c>symbol_changes</c> hint was missed.
-/// On the end of the term it drops every subscription, so a standby holds no stream.
+/// On shutdown it drops every subscription.
 /// </summary>
 public sealed partial class BinanceStreamCollector(
     IMarketDataStream stream,
@@ -21,9 +20,9 @@ public sealed partial class BinanceStreamCollector(
     IngestionMetrics metrics,
     IOptions<IngestionOptions> options,
     TimeProvider timeProvider,
-    ILogger<BinanceStreamCollector> logger) : ILeaderService
+    ILogger<BinanceStreamCollector> logger) : BackgroundService
 {
-    public async Task RunAsync(CancellationToken leadershipToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         stream.CandleClosed += OnCandleClosed;
         stream.ConnectionRestored += OnConnectionRestored;
@@ -33,17 +32,17 @@ public sealed partial class BinanceStreamCollector(
             {
                 try
                 {
-                    await subscriptions.ReconcileAsync(leadershipToken).ConfigureAwait(false);
+                    await subscriptions.ReconcileAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (!leadershipToken.IsCancellationRequested)
+                catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 {
                     LogReconcileFailed(ex);
                 }
 
-                await Task.Delay(options.Value.ReconcileInterval, timeProvider, leadershipToken).ConfigureAwait(false);
+                await Task.Delay(options.Value.ReconcileInterval, timeProvider, stoppingToken).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (leadershipToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
         finally

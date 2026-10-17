@@ -2,7 +2,6 @@ using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 using MarketData.Infrastructure;
 using MarketData.Ingestion.Backfill;
-using MarketData.Ingestion.Leadership;
 using Microsoft.Extensions.Options;
 
 namespace MarketData.Ingestion.Pipeline;
@@ -22,27 +21,27 @@ public sealed partial class CandleWriter(
     IngestionMetrics metrics,
     IOptions<IngestionOptions> options,
     TimeProvider timeProvider,
-    ILogger<CandleWriter> logger) : ILeaderService
+    ILogger<CandleWriter> logger) : BackgroundService
 {
     private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromMilliseconds(500);
 
     private readonly IngestionOptions _options = options.Value;
 
-    public async Task RunAsync(CancellationToken leadershipToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var batch = new List<Candle>(_options.WriteBatchSize);
         try
         {
-            while (await pipe.Reader.WaitToReadAsync(leadershipToken).ConfigureAwait(false))
+            while (await pipe.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
             {
-                await FillBatchAsync(batch, leadershipToken).ConfigureAwait(false);
-                await WriteWithRetryAsync(batch, leadershipToken).ConfigureAwait(false);
+                await FillBatchAsync(batch, stoppingToken).ConfigureAwait(false);
+                await WriteWithRetryAsync(batch, stoppingToken).ConfigureAwait(false);
                 batch.Clear();
             }
         }
-        catch (OperationCanceledException) when (leadershipToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // Unwritten candles are recovered by the next leader's tail backfill and gap scan.
+            // Unwritten candles are recovered by the next start's tail backfill and gap scan.
         }
     }
 

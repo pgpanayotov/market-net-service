@@ -1,7 +1,6 @@
 using MarketData.Core.Abstractions;
 using MarketData.Core.Domain;
 using MarketData.Infrastructure.Binance;
-using MarketData.Ingestion.Leadership;
 using MarketData.Ingestion.Pipeline;
 using MarketData.Ingestion.Symbols;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -10,18 +9,16 @@ using Microsoft.Extensions.Options;
 namespace MarketData.Ingestion.Health;
 
 /// <summary>
-/// The worker's role, and for the leader whether ingestion works (system-design §7): the WebSocket is
-/// connected, the <c>symbol_changes</c> listener is listening, and every active symbol's newest stored
-/// candle closed within <see cref="IngestionOptions.FreshnessThreshold"/>. A standby is healthy: it is a
-/// hot spare, not a failure.
+/// Whether ingestion works (system-design §7): the WebSocket is connected, the <c>symbol_changes</c>
+/// listener is listening, and every active symbol's newest stored candle closed within
+/// <see cref="IngestionOptions.FreshnessThreshold"/>.
 /// </summary>
 /// <remarks>
 /// Freshness is read from the database (one index probe per symbol) rather than from writer state, so
-/// candles stored by backfill count too. A symbol gets the threshold as grace after the term starts or
+/// candles stored by backfill count too. A symbol gets the threshold as grace after the worker starts or
 /// after it is subscribed, whichever is later.
 /// </remarks>
 public sealed class IngestionHealthCheck(
-    LeadershipState leadership,
     IMarketDataStream stream,
     SymbolChangeListener listener,
     IngestionState state,
@@ -30,16 +27,8 @@ public sealed class IngestionHealthCheck(
     IOptions<IngestionOptions> options,
     TimeProvider timeProvider) : IHealthCheck
 {
-    public const string RoleKey = "role";
-
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
-        var since = leadership.LeaderSince;
-        if (since is null)
-        {
-            return HealthCheckResult.Healthy("Standby: another worker holds the leader lock.", Data(WorkerRole.Standby));
-        }
-
         var problems = new List<string>();
         if (!stream.IsConnected)
         {
@@ -58,7 +47,7 @@ public sealed class IngestionHealthCheck(
         var stale = active
             .Where(s =>
             {
-                var graceStart = state.SubscribedAt(s.Id) is { } at && at > since.Value ? at : since.Value;
+                var graceStart = state.SubscribedAt(s.Id) is { } at && at > state.StartedAt ? at : state.StartedAt;
                 var fresh = latest.TryGetValue(s.Id, out var open) && now - (open + MarketDataConstants.CandleInterval) <= threshold;
                 return !fresh && now - graceStart > threshold;
             })
@@ -70,9 +59,7 @@ public sealed class IngestionHealthCheck(
         }
 
         return problems.Count == 0
-            ? HealthCheckResult.Healthy($"Leader: ingesting {active.Count} symbol(s).", Data(WorkerRole.Leader))
-            : HealthCheckResult.Unhealthy($"Leader: {string.Join("; ", problems)}.", data: Data(WorkerRole.Leader));
+            ? HealthCheckResult.Healthy($"Ingesting {active.Count} symbol(s).")
+            : HealthCheckResult.Unhealthy($"{string.Join("; ", problems)}.");
     }
-
-    private static Dictionary<string, object> Data(WorkerRole role) => new() { [RoleKey] = role == WorkerRole.Leader ? "leader" : "standby" };
 }

@@ -396,3 +396,25 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
 - New tests: Core (empty-window series items, service sparse history, contract JSON/XML omission), API (`Series_WithLittleHistory_StillReturnsCountItems`), console client (`-` for empty windows), ingestion integration (a symbol with only recent data is deepened to the depth; nothing is refetched when the depth is satisfied).
 - Live, `docker compose up --build` against Binance (fresh volume): all three symbols backfilled ~48.9k candles (35d) at startup. `GET /api/BTCUSDT/SimpleMovingAverage?n=5&p=1w` returned 200 with `dataPointsUsed: 5`, and `?n=5&p=1d&series=true&count=5` returned 5 items, each with 5 data points.
 - Live deepening of an existing database: deleted BTCUSDT candles older than 10 days (14,392 rows left, oldest 2026-10-08), restarted the worker, and it was back to 50,400 rows (35d exactly), oldest 2026-09-13 19:45.
+
+### Removing leader election (ADR-009, 2026-10-18)
+
+**Why:** leader election (ADR-007) bought fast failover, and nothing the data needs.
+- Two workers running at once are harmless, because writes are idempotent upserts that skip no-op updates.
+- A dead worker's gap is repaired by the startup tail backfill (P9: 5 minutes down, 0 gaps afterwards).
+- Meanwhile it added leadership terms, per-term service lifecycles, a standby role, an `is_leader` gauge, and a leadership change on every database outage.
+
+**What changed:**
+- **Removed:** `Leadership/` (`LeaderLock`, `LeadershipState`, `ILeaderService`, `WorkerRole`); the options `LeaderRetryInterval`, `LeaderCheckInterval` and `LeaderLockKey`; the `role` field in `/health/ready`; and the `marketdata.worker.is_leader` gauge.
+- **Plain hosted services:** `SymbolChangeListener`, `BinanceStreamCollector`, `CandleWriter` and `GapBackfiller` are now ordinary hosted services. An unhandled exception stops the host (the .NET default), and the orchestrator restarts it.
+- **Readiness** measures freshness grace from process start (`IngestionState.StartedAt`) instead of from the leadership term.
+- **Docs:** ADR-009 supersedes ADR-007's leadership part (the worker/API split and `LISTEN/NOTIFY` stay). ADR-005 wording, system design (§1.2, §3, §6.3, §6.5, §7, §8, §9, §11), README, compose and Dockerfile comments, and CLAUDE.md are updated.
+
+**Decision during implementation:** a single-instance guard (take the lock at startup, exit if another worker holds it) was built first and then dropped at the owner's request. A rolling deploy briefly runs two workers anyway, and that is safe, so the guard only prevented a harmless state.
+
+**Validation:**
+- `dotnet build MarketData.slnx`: 0 warnings. `dotnet test --solution MarketData.slnx`: **257 passed**. `LeadershipTests` were replaced by `OverlappingWorkersTests`: two workers side by side both subscribe, the same candle emitted by both is stored once, and both report ready.
+- **Live** (`docker compose -p marketdata-adr9`, real Binance):
+  - Readiness JSON is now `{status, checks}` with `"Ingesting 3 symbol(s)."`.
+  - After `--scale ingestion=2`, both workers were healthy, and over the next 2 minutes each symbol had exactly **2 rows** (one per minute, no duplicates).
+  - Restart count 0 for both workers, and no exceptions or failures in the logs. The stack was torn down afterwards.

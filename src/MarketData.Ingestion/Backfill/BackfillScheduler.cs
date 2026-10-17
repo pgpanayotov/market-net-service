@@ -75,7 +75,7 @@ public sealed class BackfillScheduler
         return [.. taken.OrderBy(r => r.Kind).ThenBy(r => r.Symbol is null)];
     }
 
-    /// <summary>Drops pending work, e.g. when a leadership term ends.</summary>
+    /// <summary>Drops pending work, e.g. when the backfiller stops.</summary>
     public void Clear()
     {
         _pending.Clear();

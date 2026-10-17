@@ -10,7 +10,7 @@ public sealed class IngestionPipelineTests(PostgresFixture postgres) : WorkerTes
     private static readonly string[] Seeded = ["ADAUSDT", "BTCUSDT", "ETHUSDT"];
 
     [Fact]
-    public async Task Leader_subscribes_active_symbols_and_persists_streamed_candles()
+    public async Task Worker_subscribes_active_symbols_and_persists_streamed_candles()
     {
         var worker = StartWorker();
         worker.Rest.HasHistory = false;
@@ -117,13 +117,12 @@ public sealed class IngestionPipelineTests(PostgresFixture postgres) : WorkerTes
     }
 
     [Fact]
-    public async Task Readiness_reports_the_leader_and_fails_while_the_stream_is_down()
+    public async Task Readiness_reports_the_checks_and_fails_while_the_stream_is_down()
     {
         var worker = StartWorker();
-        await EventuallyAsync(async () => (await worker.GetReadinessAsync(Ct)).StatusCode == 200, "a ready leader");
+        await EventuallyAsync(async () => (await worker.GetReadinessAsync(Ct)).StatusCode == 200, "a ready worker");
 
         var (_, ready) = await worker.GetReadinessAsync(Ct);
-        Assert.Equal("leader", ready.Role);
         Assert.Equal(["database", "schema", "ingestion"], ready.Checks.Select(c => c.Name));
 
         worker.Stream.Disconnect();
@@ -144,7 +143,7 @@ public sealed class IngestionPipelineTests(PostgresFixture postgres) : WorkerTes
     {
         var worker = StartWorker(new Dictionary<string, string> { ["MarketData:FreshnessThreshold"] = "00:00:01" });
         worker.Rest.HasHistory = false;
-        await EventuallyAsync(() => worker.Leadership.IsLeader, "leadership");
+        await EventuallyAsync(() => worker.Stream.SubscribedNames.Count == 3, "ingestion started");
 
         await EventuallyAsync(
             async () =>

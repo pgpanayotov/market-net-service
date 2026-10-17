@@ -1,6 +1,6 @@
 # ADR-007: Separate ingestion worker; Postgres LISTEN/NOTIFY for cross-process signals
 
-**Status:** Accepted
+**Status:** Accepted; leadership part superseded by [ADR-009](009-single-ingestion-replica-no-leader-election.md)
 **Date:** 2026-10-18
 **Deciders:** Project owner
 **Supersedes:** [ADR-003](003-collector-in-api-process.md)
@@ -15,7 +15,7 @@ The owner decided to **split ingestion into its own process** and use **Postgres
 
 ## Decision
 - **Two hosts:**
-  - **`MarketData.Ingestion`** is a .NET Worker Service containing `BinanceStreamCollector`, `CandleWriter`, `GapBackfiller` and `SymbolChangeListener`. It runs as **one active instance**, guarded by `pg_try_advisory_lock(<const>)` held on a dedicated connection. An accidental second replica waits as a hot standby and takes over if the lock is released (process dies, connection drops).
+  - **`MarketData.Ingestion`** is a .NET Worker Service containing `BinanceStreamCollector`, `CandleWriter`, `GapBackfiller` and `SymbolChangeListener`. It runs as **one active instance**, guarded by `pg_try_advisory_lock(<const>)` held on a dedicated connection. An accidental second replica waits as a hot standby and takes over if the lock is released (process dies, connection drops). *(Superseded by ADR-009: one replica, no leader election or standby.)*
   - **`MarketData.Api`** is stateless (apart from its local cache) and can scale horizontally. It never touches Binance WebSockets and holds no `LISTEN` connection. It calls Binance REST only for `exchangeInfo` validation on symbol add.
 - **Channel `symbol_changes` (API → worker).** `SymbolsController` updates `symbols` and calls `SELECT pg_notify('symbol_changes', @json)` **in the same transaction**. Postgres delivers notifications only on commit, so a rolled-back change is never signalled.
   Payload: `{"op":"add"|"remove","symbolId":100,"symbol":"SOLUSDT","changedAt":"…"}`. *(Amended in P3: `symbolId` added and `version` replaced by `changedAt`. Receivers re-read the symbol from the DB, so `op` is only informational.)*
@@ -81,5 +81,5 @@ C gives B's isolation and scale-out with A's responsiveness, using a database al
 1. [x] Create `MarketData.Ingestion` (Worker SDK) and move collector, writer and backfiller hosted services there.
 2. [x] `PgNotificationListener` in Infrastructure: dedicated connection, `LISTEN` → reconcile callback → `WaitAsync` loop, exponential reconnect.
 3. [x] `SymbolsController`: one transaction for the update and `pg_notify('symbol_changes', …)`.
-4. [x] Advisory-lock leadership in the worker. Readiness reports `leader | standby`.
+4. [x] Advisory-lock leadership in the worker. Readiness reports `leader | standby`. *(Removed by ADR-009.)*
 5. [x] Integration tests: admin add → worker subscribes (fake stream), and the listener reconnect path triggers reconcile.

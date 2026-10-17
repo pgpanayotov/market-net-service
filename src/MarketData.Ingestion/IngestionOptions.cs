@@ -7,7 +7,7 @@ public sealed class IngestionOptions
 
     /// <summary>
     /// How much history every active symbol should have, counted back from now. Replaces the former
-    /// <c>BackfillOnAdd</c>. At the start of a leader term and when a symbol is added or reactivated, a
+    /// <c>BackfillOnAdd</c>. At startup and when a symbol is added or reactivated, a
     /// symbol with no data is filled from <c>now − HistoryDepth</c>, and one whose oldest candle is
     /// younger than that is deepened backwards. The default covers a 1w SMA with n up to 5.
     /// </summary>
@@ -34,15 +34,6 @@ public sealed class IngestionOptions
     /// <summary>Periodic reconcile of active symbols against live subscriptions, in case a notification was missed.</summary>
     public TimeSpan ReconcileInterval { get; set; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>How often a standby retries the leader lock.</summary>
-    public TimeSpan LeaderRetryInterval { get; set; } = TimeSpan.FromSeconds(10);
-
-    /// <summary>How often the leader checks that its lock session is still alive.</summary>
-    public TimeSpan LeaderCheckInterval { get; set; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>Key of the <c>pg_try_advisory_lock</c> that elects the leader. Every worker of one deployment must use the same key.</summary>
-    public long LeaderLockKey { get; set; } = 0x4D41_524B_4554; // "MARKET"
-
-    /// <summary>Readiness fails for the leader when an active symbol's newest candle closed longer ago than this.</summary>
+    /// <summary>Readiness fails when an active symbol's newest candle closed longer ago than this.</summary>
     public TimeSpan FreshnessThreshold { get; set; } = TimeSpan.FromMinutes(2);
 }

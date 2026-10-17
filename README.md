@@ -8,7 +8,7 @@ Binance REST ─┘ (backfill)              ▲            │
                          migrator ──────┘            └─ pg_notify(symbol_changes) ──► worker
 ```
 
-- **Ingestion** (`src/MarketData.Ingestion`) subscribes to `<symbol>@kline_1m` and upserts every closed candle. Gaps are repaired from Binance REST (tail backfill plus a 48h gap scan). One worker is active at a time (Postgres advisory lock); extra replicas wait as hot standbys.
+- **Ingestion** (`src/MarketData.Ingestion`) subscribes to `<symbol>@kline_1m` and upserts every closed candle. Gaps are repaired from Binance REST (tail backfill plus a 48h gap scan). Run one worker: there is no leader election, and a brief overlap during a deploy is harmless because writes are idempotent.
 - **API** (`src/MarketData.Api`) is stateless. It serves the analysis endpoints and the admin endpoints for symbols. An admin change commits together with a `pg_notify`, which the worker acts on within about a second.
 - **Migrator** is an EF Core migration bundle that runs as an init container. The apps never change the schema themselves.
 
@@ -44,7 +44,6 @@ The API is on `http://localhost:8080` (`API_PORT`). The OpenAPI document is at `
 Other commands:
 
 ```bash
-docker compose up -d --scale ingestion=2    # a second worker waits as hot standby and takes over in seconds
 docker compose logs -f ingestion
 docker compose run --rm migrator            # re-run migrations (a no-op when the schema is current)
 docker compose --profile tools down -v      # stop everything and delete the database volume
@@ -192,16 +191,14 @@ Standard .NET configuration: `appsettings.json`, then environment variables (`__
 | Key | Default | Description |
 |---|---|---|
 | `MarketData:Binance:SocketBaseUrl` | `wss://stream.binance.com:9443` | Spot WebSocket base URL |
-| `MarketData:HistoryDepth` | `35.00:00:00` | History every active symbol should have, counted back from now. At the start of a leader term and when a symbol is added or reactivated, missing history before the oldest stored candle is fetched (a symbol without data starts at this depth). Replaces the former `BackfillOnAdd` (24h); an old `BackfillOnAdd` setting is ignored |
+| `MarketData:HistoryDepth` | `35.00:00:00` | History every active symbol should have, counted back from now. At worker startup and when a symbol is added or reactivated, missing history before the oldest stored candle is fetched (a symbol without data starts at this depth). Replaces the former `BackfillOnAdd` (24h); an old `BackfillOnAdd` setting is ignored |
 | `MarketData:GapScanInterval` / `GapScanWindow` | `00:05:00` / `2.00:00:00` | Gap-scan cadence and how far back it looks |
 | `MarketData:ReconcileInterval` | `00:01:00` | Periodic reconcile of active symbols against live subscriptions |
 | `MarketData:ChannelCapacity` | `10000` | In-memory buffer between stream and writer (oldest dropped when full; the gap scan repairs drops) |
 | `MarketData:WriteBatchSize` / `WriteBatchWindow` / `WriteMaxRetryDelay` | `500` / `00:00:01` / `00:00:30` | Writer batching and retry cap |
-| `MarketData:LeaderRetryInterval` / `LeaderCheckInterval` | `00:00:10` / `00:00:05` | Standby retry and leader session probe |
-| `MarketData:LeaderLockKey` | `84942948877652` (0x4D41524B4554, "MARKET") | Advisory-lock key. All workers of one deployment must use the same key |
-| `MarketData:FreshnessThreshold` | `00:02:00` | Leader readiness fails when an active symbol's newest candle is older than this |
+| `MarketData:FreshnessThreshold` | `00:02:00` | Readiness fails when an active symbol's newest candle is older than this |
 | `MarketData:Telemetry:ConsoleExporter` | `false` | Print metrics to the console |
-| `Kestrel:Endpoints:Health:Url` | `http://*:8081` | Health endpoint (`/health/live`, `/health/ready`, JSON with `role: leader\|standby`) |
+| `Kestrel:Endpoints:Health:Url` | `http://*:8081` | Health endpoint (`/health/live`, `/health/ready`, JSON with each check's status) |
 
 ### Compose (`.env`)
 
@@ -235,7 +232,7 @@ The schema and the seed data (the three initial symbols) come only from **EF Cor
         - name: MIGRATOR_CONNECTION
           valueFrom: { secretKeyRef: { name: marketdata-db, key: migrator } }
   ```
-- **Separate roles (production).** Compose uses one superuser for simplicity. In production the migrator owns the schema, and the apps get data access only (`LISTEN`/`NOTIFY` and advisory locks need no grants):
+- **Separate roles (production).** Compose uses one superuser for simplicity. In production the migrator owns the schema, and the apps get data access only (`LISTEN`/`NOTIFY` needs no grants):
   ```sql
   CREATE ROLE marketdata_migrator LOGIN PASSWORD '…';
   CREATE ROLE marketdata_app      LOGIN PASSWORD '…';
@@ -289,14 +286,14 @@ CI (`.github/workflows/ci.yml`) builds and tests in Release with locked restores
 
 - **Health:**
   - API: `/health/live` and `/health/ready` (database + schema).
-  - Worker (`:8081`, not published by compose): `/health/ready` also checks the WebSocket, the `symbol_changes` listener, and freshness (newest candle under 2 minutes old) on the leader. A standby reports `role: standby` and is ready.
+  - Worker (`:8081`, not published by compose): `/health/ready` also checks the WebSocket, the `symbol_changes` listener, and freshness (newest candle under 2 minutes old).
   - Both images have Docker `HEALTHCHECK`s on `/health/ready`.
 - **Metrics** (OpenTelemetry meter `MarketData`):
   - `marketdata.candles.ingested`, `marketdata.ingest.lag`, `marketdata.ws.reconnects`
   - `marketdata.backfill.candles`, `marketdata.gap.minutes`
-  - `marketdata.channel.depth` / `.dropped`, `marketdata.writer.failures`, `marketdata.worker.is_leader`
+  - `marketdata.channel.depth` / `.dropped`, `marketdata.writer.failures`
   - `marketdata.pg_listener.reconnects`, `marketdata.notifications.received`, `marketdata.analysis_cache.lookups`
-- **Scaling:** the API scales horizontally. Run up to N workers: one leads, the others wait on the advisory lock and take over within seconds if it dies.
+- **Scaling:** the API scales horizontally. Run **one** ingestion worker ([ADR-009](docs/adr/009-single-ingestion-replica-no-leader-election.md)); the orchestrator restarts it on failure and the startup backfill repairs the gap. Two workers overlapping (e.g. a rolling deploy) store each candle once, at the cost of a duplicate socket while it lasts.
 - **Completeness:** restarts and outages are repaired automatically. On start and after reconnects the worker backfills from its newest candle, and every 5 minutes it scans the last 48h for gaps and refills them from Binance REST.
 
 ## Troubleshooting

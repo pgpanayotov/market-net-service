@@ -36,9 +36,6 @@ public sealed class IngestionMetrics : IDisposable
     public void ObserveChannelDepth(Func<int> depth) =>
         _meter.CreateObservableGauge("marketdata.channel.depth", depth, description: "Candles waiting in the writer channel");
 
-    public void ObserveLeadership(Func<int> isLeader) =>
-        _meter.CreateObservableGauge("marketdata.worker.is_leader", isLeader, description: "1 while this worker holds the leader lock");
-
     public void ObserveGaps(Func<IEnumerable<Measurement<long>>> gaps) =>
         _meter.CreateObservableGauge("marketdata.gap.minutes", gaps, description: "Missing minutes found by the latest gap scan, by symbol");
 
