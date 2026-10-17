@@ -6,4 +6,8 @@
     <!-- Exit code 8 = "zero tests ran". Remove once every test project has tests (P1, P4, P5). -->
     <TestingPlatformCommandLineArguments>$(TestingPlatformCommandLineArguments) --ignore-exit-code 8</TestingPlatformCommandLineArguments>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
 </Project>

@@ -49,13 +49,13 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 **DoD:** `dotnet build` and `dotnet test` (empty) pass. The reference graph matches the above.
 
 ### P1: Core domain + Contracts
-- [ ] `TimePeriod` value object: parse `1m|5m|30m|1d|1w` (case-insensitive), `ToTimeSpan()`, `Floor(DateTimeOffset)` with the Monday week origin `2000-01-03Z`.
-- [ ] `SymbolName` normalization (trim, upper-case, `^[A-Z0-9]{5,20}$`).
-- [ ] `SmaCalculator`: single value and rolling series (O(n + count) sliding `decimal` sum, partial windows, elements with zero points omitted).
-- [ ] `PriceAnalysisService` orchestration against interfaces: `ICandleQueryRepository`, `ISymbolRepository`, `ISymbolDataState`. It handles the anchoring rule `effectiveRef = floor(min(s ?? now, latest), p)` and the window `[latest − 24h, latest)`.
-- [ ] Request validation: `1 ≤ n ≤ 1000`; `count` 1..1000 and only with `series=true`; `s` not in the future; default `count = min(n, 100)`.
-- [ ] Contracts DTOs with `[DataContract]`/`[DataMember(Name=camelCase, EmitDefaultValue=false)]`: `AvgPriceResponse`, `SmaResponse` (+ `SmaPoint`, `SmaSeriesItem`), `SymbolDto`, `AddSymbolRequest`.
-- [ ] Unit tests (ADR-006 list): boundary and off-boundary `s`, `s > latest`, week boundary, gaps, series vs. single equivalence, validation errors.
+- [x] `TimePeriod` value object: parse `1m|5m|30m|1d|1w` (case-sensitive, so `1M` is never read as a minute), `ToTimeSpan()`, `Floor(DateTimeOffset)` with the Monday week origin `2000-01-03Z`.
+- [x] `SymbolName` normalization (trim, upper-case, `^[A-Z0-9]{5,20}$`).
+- [x] `SmaCalculator`: single value and rolling series (O(n + count) sliding `decimal` sum, partial windows, elements with zero points omitted).
+- [x] `PriceAnalysisService` orchestration against interfaces: `ICandleQueryRepository`, `ISymbolRepository`, `ISymbolDataState`. It handles the anchoring rule `effectiveRef = floor(min(s ?? now, latest), p)` and the window `[latest − 24h, latest)`.
+- [x] Request validation: `1 ≤ n ≤ 1000`; `count` 1..1000 and only with `series=true`; `s` not in the future; default `count = min(n, 100)`.
+- [x] Contracts DTOs with `[DataContract]`/`[DataMember(Name=camelCase, EmitDefaultValue=false)]`: `AvgPriceResponse`, `SmaResponse` (+ `SmaPoint`, `SmaSeriesItem`), `SymbolDto`, `AddSymbolRequest`.
+- [x] Unit tests (ADR-006 list): boundary and off-boundary `s`, `s > latest`, week boundary, gaps, series vs. single equivalence, validation errors.
 
 **DoD:** 100% branch coverage on `TimePeriod` and `SmaCalculator`. DTOs round-trip through both the JSON and the DataContract XML serializers.
 

@@ -191,7 +191,7 @@ builder.Services.AddProblemDetails();           // errors also negotiated (JSON/
 - When fewer than `n` buckets exist for a series element, that element is still emitted with its actual `dataPointsUsed`. Elements with 0 points are omitted.
 - `series=false` (default) keeps the single-value shape above, so existing callers don't change. In series mode `points` is not returned (the series is the useful output). `simpleMovingAverage`/`series` are mutually exclusive in the DTO (`SmaResponse` has both, nullable; XML omits null elements).
 
-Validation: `1 ≤ n ≤ 1000`, `1 ≤ count ≤ 1000` (only valid with `series=true`, otherwise 400), so a query reads at most 1,999 buckets. `s` is ISO-8601 (treated as UTC when there's no offset) and must not be in the future.
+Validation: `p` codes are case-sensitive (`1M` means a month by convention, so it is rejected). `1 ≤ n ≤ 1000`, `1 ≤ count ≤ 1000` (only valid with `series=true`, otherwise 400), so a query reads at most 1,999 buckets. `s` is ISO-8601 (treated as UTC when there's no offset) and must not be in the future.
 
 ### 5.2 Admin endpoints
 | Method | Route | Body | Result |

@@ -43,3 +43,35 @@ Design came first, then implementation:
 - `dotnet test --solution MarketData.slnx`: exit 0 (0 tests, as expected for P0).
 - `dotnet ef --version`: 10.0.13 through the local tool manifest.
 - Binance reachability from the dev network: `api.binance.com/api/v3/ping` → 200 and `data-api.binance.vision/api/v3/ping` → 200. Default endpoints are fine, but base URLs will still be configurable.
+
+### P1: Core domain + Contracts (2026-10-18)
+
+**What was built:**
+- **Contracts:** `AvgPriceResponse`, `SmaResponse` (+ `SmaPoint`, `SmaSeriesItem`), `SymbolDto`, `SymbolList`, `AddSymbolRequest`.
+  - Each is marked `[DataContract(Namespace = "")]` with explicit camelCase `DataMember` names and `Order`, so XML element names match the JSON property names.
+  - Optional members use `EmitDefaultValue = false` together with `[JsonIgnore(WhenWritingNull)]`, so the single-value and series SMA shapes omit each other's fields in both formats.
+- **Core / Domain:**
+  - `TimePeriod`: parses period codes, floors to bucket start from the Monday origin `2000-01-03Z`, and works before the origin too.
+  - `SymbolName`: normalizes and validates `^[A-Z0-9]{5,20}$`.
+  - `MarketDataConstants`.
+- **Core / Analysis:**
+  - `SmaCalculator`: mean, plus the O(n + count) sliding-sum series over time windows.
+  - `AnalysisValidator`: errors are keyed by query-parameter name (`symbol`, `n`, `p`, `s`, `count`), ready for ProblemDetails.
+  - `PriceAnalysisService`: anchors at `dataEnd = latestOpenTime + 1m` and floors to `p` (ADR-006).
+  - `AnalysisResult<T>` / `AnalysisError` (`Invalid`, `UnknownSymbol`, `NoData`).
+- **Core / Abstractions:** the interfaces that P2 and P5 implement: `ISymbolRepository`, `ICandleQueryRepository`, `ISymbolDataState`.
+
+**Decisions and deviations:**
+- **DTO timestamps are UTC `DateTime`, not `DateTimeOffset`.** `DataContractSerializer` writes `DateTimeOffset` as a nested `<DateTime>/<OffsetMinutes>` element. A UTC `DateTime` is written as `2026-10-18T12:05:00Z` in both XML and JSON, and deserializes with `Kind = Utc` (covered by a test). Core still uses `DateTimeOffset` internally.
+- **Period codes are case-sensitive.** The plan said case-insensitive, but `1M` means one month in Binance and common usage, so accepting it as one minute would be a silent mistake. The design doc and plan are updated.
+- **Averages are rounded to 10 decimal places** (banker's rounding), the same as the `numeric(28,10)` price columns. Without rounding, `decimal` division would return up to 28 digits.
+- **`isFullPeriod` = the first candle in the window is at the window start** (`[dataEnd − 24h, dataEnd)`), meaning the history covers the whole 24h. A gap exactly at the start minute would report `false`. That's acceptable, because the gap scan repairs such holes (ADR-005).
+- **A start time `s` older than all stored data returns 404 "No data available"**, the same as a symbol with no candles.
+- **Test-only setup:** `Microsoft.Extensions.TimeProvider.Testing` (`FakeTimeProvider`) and `Microsoft.Testing.Extensions.CodeCoverage` were added to the test projects. `tests/Directory.Build.props` adds a global `using Xunit;`.
+- **xUnit analyzer `xUnit1051`** (pass `TestContext.Current.CancellationToken`) is an error under `TreatWarningsAsErrors`. That applies even to NSubstitute setup calls, so tests pass the test token there too.
+
+**Validation:**
+- `dotnet build MarketData.slnx`: 0 warnings, 0 errors.
+- `dotnet test --project tests/MarketData.Core.Tests`: 97 passed.
+- Coverage (`--coverage --coverage-output-format cobertura`): **100% line and branch on every hand-written Contracts and Core class**, including `TimePeriod`, `SmaCalculator`, `AnalysisValidator` and `PriceAnalysisService`. The only code under 100% is the regex source-generator output.
+- Contract round-trips: every DTO serializes → deserializes → serializes identically through System.Text.Json (web defaults) and `DataContractSerializer`. Golden assertions pin the XML element names, the omission of unset members, and the JSON shape of a series response.
