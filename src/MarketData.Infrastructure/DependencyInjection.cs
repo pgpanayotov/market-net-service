@@ -1,4 +1,5 @@
 using MarketData.Core.Abstractions;
+using MarketData.Infrastructure.Notifications;
 using MarketData.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -22,6 +23,7 @@ public static class DependencyInjection
         services.AddScoped<CandleRepository>();
         services.AddScoped<ICandleQueryRepository>(sp => sp.GetRequiredService<CandleRepository>());
         services.AddScoped<ICandleIngestRepository>(sp => sp.GetRequiredService<CandleRepository>());
+        services.AddScoped<IPgNotificationPublisher, PgNotificationPublisher>();
         return services;
     }
 }

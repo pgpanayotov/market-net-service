@@ -70,6 +70,13 @@ public interface ICandleQueryRepository
         int limit,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Open time of the newest stored candle; <c>null</c> when the symbol has no data. The analysis
+    /// window is anchored here (ADR-006). It is a backward probe of the PK index, cheap enough to run
+    /// on every request.
+    /// </summary>
+    Task<DateTimeOffset?> GetLatestOpenTimeAsync(int symbolId, CancellationToken cancellationToken);
+
     /// <summary>Open time of the newest candle for every symbol that has data.</summary>
     Task<IReadOnlyDictionary<int, DateTimeOffset>> GetLatestOpenTimesAsync(CancellationToken cancellationToken);
 }
@@ -89,14 +96,4 @@ public interface ICandleIngestRepository
     /// (that history is the tail backfill's job), so a symbol with no candles returns no ranges.
     /// </summary>
     Task<IReadOnlyList<TimeRange>> FindMissingRangesAsync(int symbolId, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken);
-}
-
-/// <summary>
-/// Newest stored candle per symbol. In the API it is kept current by <c>candles_written</c>
-/// notifications (ADR-007).
-/// </summary>
-public interface ISymbolDataState
-{
-    /// <summary>Open time of the newest stored candle; <c>null</c> when the symbol has no data.</summary>
-    DateTimeOffset? GetLatestOpenTime(int symbolId);
 }

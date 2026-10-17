@@ -177,6 +177,18 @@ public class CandleRepositoryTests(PostgresFixture postgres) : PostgresTest(post
     // ---- Latest ----
 
     [Fact]
+    public async Task GetLatestOpenTime_IsNewestCandleOfThatSymbol_OrNull()
+    {
+        await SeedAsync(Minutes(Btc, T0, 1m, 2m, 3m));
+        await SeedAsync(Minutes(Eth, T0.AddHours(1), 1m));
+        await using var db = Postgres.CreateContext();
+        var repository = new CandleRepository(db);
+
+        Assert.Equal(T0.AddMinutes(2), await repository.GetLatestOpenTimeAsync(Btc, Ct));
+        Assert.Null(await repository.GetLatestOpenTimeAsync(Ada, Ct));
+    }
+
+    [Fact]
     public async Task GetLatestOpenTimes_OnlySymbolsWithData()
     {
         await SeedAsync(Minutes(Btc, T0, 1m, 2m, 3m));

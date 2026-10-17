@@ -19,7 +19,6 @@ public interface IPriceAnalysisService
 public sealed class PriceAnalysisService(
     ISymbolRepository symbols,
     ICandleQueryRepository candles,
-    ISymbolDataState dataState,
     TimeProvider timeProvider) : IPriceAnalysisService
 {
     public async Task<AnalysisResult<AvgPriceResponse>> Get24hAverageAsync(string? symbol, CancellationToken cancellationToken)
@@ -127,7 +126,7 @@ public sealed class PriceAnalysisService(
             return (null, default, new AnalysisError.UnknownSymbol(name.Value));
         }
 
-        if (dataState.GetLatestOpenTime(info.Id) is not { } latest)
+        if (await candles.GetLatestOpenTimeAsync(info.Id, cancellationToken).ConfigureAwait(false) is not { } latest)
         {
             return (info, default, new AnalysisError.NoData(name.Value));
         }

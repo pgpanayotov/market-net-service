@@ -65,6 +65,18 @@ public sealed class CandleRepository(MarketDataDbContext db) : ICandleQueryRepos
         return result;
     }
 
+    public async Task<DateTimeOffset?> GetLatestOpenTimeAsync(int symbolId, CancellationToken cancellationToken)
+    {
+        // A backward probe of the PK index: one page read, independent of table size.
+        const string sql = "SELECT max(open_time) FROM candles_1m WHERE symbol_id = @symbol_id";
+
+        await using var command = await db.CreateCommandAsync(sql, cancellationToken).ConfigureAwait(false);
+        command.With("symbol_id", symbolId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return reader.IsDBNull(0) ? null : reader.GetUtcDateTimeOffset(0);
+    }
+
     public async Task<IReadOnlyDictionary<int, DateTimeOffset>> GetLatestOpenTimesAsync(CancellationToken cancellationToken)
     {
         // LATERAL max() per symbol uses the PK backwards; a GROUP BY would scan the whole table.

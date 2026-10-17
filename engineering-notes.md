@@ -59,7 +59,7 @@ Design came first, then implementation:
   - `AnalysisValidator`: errors are keyed by query-parameter name (`symbol`, `n`, `p`, `s`, `count`), ready for ProblemDetails.
   - `PriceAnalysisService`: anchors at `dataEnd = latestOpenTime + 1m` and floors to `p` (ADR-006).
   - `AnalysisResult<T>` / `AnalysisError` (`Invalid`, `UnknownSymbol`, `NoData`).
-- **Core / Abstractions:** the interfaces that P2 and P5 implement: `ISymbolRepository`, `ICandleQueryRepository`, `ISymbolDataState`.
+- **Core / Abstractions:** the interfaces that P2 and P5 implement: `ISymbolRepository`, `ICandleQueryRepository`, `ISymbolDataState` (removed in P3; the newest candle is now read through `ICandleQueryRepository`).
 
 **Decisions and deviations:**
 - **DTO timestamps are UTC `DateTime`, not `DateTimeOffset`.** `DataContractSerializer` writes `DateTimeOffset` as a nested `<DateTime>/<OffsetMinutes>` element. A UTC `DateTime` is written as `2026-10-18T12:05:00Z` in both XML and JSON, and deserializes with `Kind = Utc` (covered by a test). Core still uses `DateTimeOffset` internally.
@@ -124,3 +124,49 @@ Design came first, then implementation:
   - Run 1 applied `20261018160400_Initial` (with the EF migration lock).
   - Run 2 reported "No migrations were applied. The database is already up to date."
   - Both exited 0. Seed rows 1–3 are present, and a manual insert got id 100.
+
+### P3: Postgres notifications (2026-10-18)
+
+**What was built** (`src/MarketData.Infrastructure/Notifications`):
+- `NotificationChannels` (`symbol_changes` only; see "Dropped `candles_written`" below).
+- Payload record `SymbolChangedPayload(op, symbolId, symbol, changedAt)`, with a source-generated `NotificationJsonContext` (camelCase; enum values `add`/`remove`).
+- `IPgNotificationPublisher` / `PgNotificationPublisher`: `SELECT pg_notify(@channel, @payload)` on the scoped DbContext connection, joined to its current transaction. It is registered in `AddMarketDataPersistence`.
+- `PgNotificationListener`, an abstract `BackgroundService` with `OnConnectedAsync` (reconcile hook) and `OnNotificationAsync`:
+  - Uses a dedicated session (`Pooling=false`, `KeepAlive=30`, `application_name=marketdata-listen-<channel>`).
+  - Runs connect → `LISTEN` → reconcile → `WaitAsync` loop.
+  - Reconnects with exponential backoff and ±20% jitter (configurable, 0.5s → 30s).
+  - Exposes `IsListening` for readiness checks.
+- `MarketDataMetrics` (meter `MarketData`): `marketdata.pg_listener.reconnects{channel}` and `marketdata.notifications.received{channel,outcome}`.
+
+**Decisions and deviations:**
+- **Dropped `candles_written`** (owner decision during P3 review, before commit). The worker → API channel would have fired once a minute per active symbol, an essentially predictable event. It only fed the API's in-memory "newest candle" value and cache invalidation.
+  - **Replacement:** `ICandleQueryRepository.GetLatestOpenTimeAsync`, a `max(open_time)` backward PK index probe per request. The P5 cache key includes that value, with a 60s expiry and 1h for windows older than the 48h gap-scan window.
+  - **Removed:** `ISymbolDataState`, `CandlesWrittenPayload`, and the planned `CandlesWrittenListener`, `SymbolDataState` and change-token plumbing. API replicas now hold no `LISTEN` connection.
+  - **Trade-off:** one index probe per request instead of zero DB round-trips on a cache hit. Staleness after an out-of-order gap repair is bounded by the 60s cache expiry instead of being instant.
+  - **Docs amended:** ADR-006 (anchor + caching), ADR-007 (one channel), the R3 resolution, system-design §3/§6.3/§6.4/§6.5/§7/§9/§11, the implementation plan (P4/P5) and CLAUDE.md.
+- **Payload changes** (design doc and ADR-007 amended):
+  - The payload carries `symbolId`, so the worker can re-read the symbol without a name lookup.
+  - `symbol_changes` has `changedAt` instead of `version`.
+  - Receivers should **re-read the symbol from the DB** rather than trust `op`, so ordering and duplicates don't matter.
+- **Notifications are dispatched between `WaitAsync` calls, never inside Npgsql's `Notification` event.** The event only enqueues, so a handler can do async work (on other connections) without re-entering the listener connection.
+- **Failure handling:**
+  - A failing `OnConnectedAsync` counts as a failed connection and is retried with backoff (for example, the DB is up but the reconcile query fails).
+  - A failing `OnNotificationAsync` is logged and counted (`outcome=error`), and the connection stays up.
+- **Channel names are validated** against `^[a-z_][a-z0-9_]{0,62}$`, because `LISTEN` takes an identifier rather than a parameter. Payloads over 7999 UTF-8 bytes are rejected before reaching Postgres.
+- **Metric names follow OpenTelemetry conventions** (`marketdata.*`) instead of the Prometheus-style names in the draft. A Prometheus exporter appends `_total` itself. system-design §7 is updated.
+- **The listener's channel property is `ChannelName`.** Calling it `Channel` hid `System.Threading.Channels.Channel` in subclasses.
+- Added `Microsoft.Extensions.Hosting.Abstractions` to Infrastructure (for `BackgroundService`).
+
+**Validation:**
+- `dotnet build MarketData.slnx`: 0 warnings, 0 errors.
+- `dotnet test --solution MarketData.slnx`: **137 passed** (97 unit + 40 Postgres integration). The 8 new `NotificationTests` cover:
+  - A committed notify is delivered.
+  - A rolled-back notify is never delivered (checked through commit ordering, without sleeping).
+  - A notify inside a transaction is delivered on commit.
+  - After `pg_terminate_backend` on the listener session, it reconnects, calls reconcile a second time, and receives later notifications.
+  - A reconcile that throws on the first connect is retried.
+- `dotnet test --solution MarketData.slnx`: **138 passed** (97 unit + 41 Postgres integration). The 8 `NotificationTests` cover:
+  - The payload JSON shapes are stable.
+  - Oversized payloads and invalid channel names are rejected.
+- Flakiness check: `NotificationTests` were run 5 more times in a row, and all passed. Waits use channels with a 15s timeout, never fixed sleeps.
+- `CandleRepositoryTests` gained a test for `GetLatestOpenTimeAsync` (newest candle of that symbol only; `null` without data). `PriceAnalysisServiceTests` now stub `ICandleQueryRepository.GetLatestOpenTimeAsync`; their results are unchanged.

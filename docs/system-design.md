@@ -59,33 +59,34 @@ The deciding advantage is that the same 1m candles exist on the REST endpoint `G
             ▼                                          │
  ┌──────────────── MarketData.Ingestion (Worker, 1 active; pg_try_advisory_lock) ─────────────────┐
  │  BinanceStreamCollector ──Channel<Candle>──► CandleWriter ──┐        GapBackfiller ────────────┘ │
- │          ▲                                  (batched upsert │                                    │
- │          │ subscribe/unsubscribe             + pg_notify)   │                                    │
+ │          ▲                                  (batched upsert)│                                    │
+ │          │ subscribe/unsubscribe                            │                                    │
  │  SymbolChangeListener  (LISTEN symbol_changes; reconcile on connect + every 60s)                 │
  └──────────▲───────────────────────────────────────────────┼──────────────────────────────────────┘
             │ NOTIFY symbol_changes                          │ upsert candles_1m
-            │ (same tx as symbols write)                     │ NOTIFY candles_written {symbol, latestOpenTime}
+            │ (same tx as symbols write)                     │
  ┌──────────┴────────────────────────────────────────────────▼──────────────┐
  │ PostgreSQL 17     symbols │ candles_1m │ __EFMigrationsHistory            │◄── migrator (efbundle)
- └──────────▲────────────────────────────────────────────────┬──────────────┘    init container: runs to
-            │ symbol writes + pg_notify, SQL rollups          │ LISTEN candles_written     completion before
-            │                                                ▼                            api + ingestion
+ └──────────▲───────────────────────────────────────────────────────────────┘    init container: runs to
+            │ symbol writes + pg_notify; per request: max(open_time) probe + SQL rollups   completion before
+            │                                                                               api + ingestion
  ┌─────────────────── MarketData.Api (stateless, N replicas) ───────────────────┐
  │  SymbolsController (admin) ───► Binance REST /api/v3/exchangeInfo (validate) │
  │  PricesController (JSON|XML) ─► PriceAnalysisService + IMemoryCache          │
- │  CandlesWrittenListener ─► SymbolDataState (latest per symbol, change tokens)│
+ │                                 (cache key includes newest candle open time) │
  └──────────▲───────────────────────────────────────────────────────────────────┘
             │ HTTP
    Console client / curl / admin
 ```
 
-**Why two processes ([ADR-007](adr/007-separate-ingestion-worker-listen-notify.md)):** the API becomes stateless and scales horizontally, API deploys and crashes no longer interrupt ingestion, and the singleton WebSocket collector has a home of its own. Cross-process signals use Postgres `LISTEN/NOTIFY`, which needs no new infrastructure and is transactional with the admin write. Notifications are treated as **hints**: both sides reconcile from the DB on every (re)connect, so a missed message only delays convergence.
+**Why two processes ([ADR-007](adr/007-separate-ingestion-worker-listen-notify.md)):** the API becomes stateless and scales horizontally, API deploys and crashes no longer interrupt ingestion, and the singleton WebSocket collector has a home of its own. The one cross-process signal, admin symbol changes, uses Postgres `LISTEN/NOTIFY`, which needs no new infrastructure and is transactional with the admin write. The notification is treated as a **hint**: the worker reconciles from the DB on every (re)connect and every 60s, so a missed message only delays convergence.
 
-**Two notification channels:**
+**Notification channel:**
 | Channel | Direction | Sent | Payload | Receiver action |
 |---|---|---|---|---|
-| `symbol_changes` | API → worker | In the **same transaction** as the `symbols` update (delivered only on commit) | `{"op":"add"\|"remove","symbol":"SOLUSDT","version":…}` | Subscribe or unsubscribe that symbol; on add, start backfill |
-| `candles_written` | worker → every API replica | After each committed batch, one per symbol | `{"symbol":"BTCUSDT","latestOpenTime":"…"}` | `latest = max(latest, payload)`; fire the symbol's cache change token |
+| `symbol_changes` | API → worker | In the **same transaction** as the `symbols` update (delivered only on commit) | `{"op":"add"\|"remove","symbolId":100,"symbol":"SOLUSDT","changedAt":"…"}` | Re-read that symbol from the DB, then subscribe or unsubscribe; on add, start backfill. `op` is informational, so reordered or duplicated hints are harmless |
+
+**No signal for new candles** (decided in P3). Candles arrive on a predictable schedule, once a minute per active symbol. The API reads the newest one per request with a `max(open_time)` PK index probe and puts it in the cache key (§6.4), so it needs no listener and no in-memory state. A `candles_written` worker → API channel was designed first and dropped before implementation.
 
 ### 3.1 Solution layout
 ```
@@ -94,7 +95,7 @@ src/
   MarketData.Core/            Domain: TimePeriod parsing/alignment, IPriceAnalysisService, ISymbolRegistry, interfaces
   MarketData.Infrastructure/  EF Core DbContext + migrations + IDesignTimeDbContextFactory (used by the bundle),
                               Binance.Net adapters, repositories, raw SQL rollups, PgNotificationListener/Publisher
-  MarketData.Api/             ASP.NET Core host: controllers, CandlesWrittenListener, SymbolDataState, health checks
+  MarketData.Api/             ASP.NET Core host: controllers, analysis cache, health checks
   MarketData.Ingestion/       Worker Service: collector, writer, gap backfiller, SymbolChangeListener, leader lock,
                               minimal /health endpoints on internal port 8081
   MarketData.Client/          Console app (System.CommandLine + typed HttpClient)
@@ -251,17 +252,16 @@ This query sits in `ICandleQueryRepository` in Infrastructure (raw SQL via `From
 0. **Leadership:** at start the worker takes `pg_try_advisory_lock(<const>)` on a dedicated connection. If it doesn't get the lock, it stays in standby (readiness reports `standby`) and retries every 10s. Only the leader runs steps 1–4.
 1. **`BinanceStreamCollector`** (BackgroundService) loads active symbols, then calls `SubscribeToKlineUpdatesAsync(symbols, KlineInterval.OneMinute, …)`. Binance.Net multiplexes these over the combined-stream connection.
 2. The callback filters `Data.Final == true` and maps to `Candle`, then `channel.Writer.TryWrite(candle)`. The callback does **no I/O**.
-3. **`CandleWriter`** reads the channel in batches (up to 500 rows or 1s), upserts in a single statement, then sends `pg_notify('candles_written', …)` once per symbol in the batch. It also updates `lastCandleAt` in memory for health and metrics. Backfilled candles notify the same way.
+3. **`CandleWriter`** reads the channel in batches (up to 500 rows or 1s), upserts in a single statement, and updates `lastCandleAt` in memory for health and metrics. It sends no notification: the API reads the newest candle per request (§6.4).
 4. **Runtime symbol changes:** `SymbolChangeListener` holds a dedicated, non-pooled `NpgsqlConnection` (`KeepAlive=30`). On every (re)connect it runs **`LISTEN symbol_changes` first, then a full reconcile** (DB active symbols vs. live subscriptions), so nothing falls between the two. It then loops on `WaitAsync(ct)`. Each notification subscribes or unsubscribes that symbol only (`UpdateSubscription.CloseAsync()`), and other streams keep running. Handlers are idempotent. A **60s reconcile** also runs, so a missed notification heals itself.
-
-**API side:** `CandlesWrittenListener` in each API replica follows the same connect sequence (`LISTEN candles_written`, then reload `max(open_time)` per symbol and clear the cache) and updates `SymbolDataState`.
 
 > **Constraint:** `LISTEN` needs a session-level connection. Any pooler in front of Postgres (PgBouncer) must run in session mode for these connections, or they must bypass it.
 
 ### 6.4 Caching
-- Data changes once per minute per symbol, so `IMemoryCache` with key `(endpoint, symbol, params)`. Entries are **invalidated by a per-symbol change token that fires when the replica receives `candles_written` for that symbol**. All tokens fire on listener reconnect, and each entry has a 10-min absolute cap as a safety net against a missed notification. A timer-based expiry would cache stale data, because the final kline lands a few seconds after the minute boundary ([ADR-006](adr/006-analysis-semantics.md)).
-- SMA requests whose `referenceTime < latest − 2 min` are **immutable**: cache for 1h (sliding).
-- Cache only after DB success, never cache errors. Each API replica keeps its own cache. `NOTIFY` broadcasts to every listener, so no distributed cache is needed.
+- Data changes once per minute per symbol. Every analysis request first reads the symbol's newest `open_time` (one PK index probe), and the `IMemoryCache` key is `(endpoint, symbol, params, latestOpenTime)`. A newly stored candle therefore means a new key, nothing has to be invalidated, and no cross-process signal is needed. A timer-based expiry would instead cache stale data, because the final kline lands a few seconds after the minute boundary ([ADR-006](adr/006-analysis-semantics.md)).
+- Entries expire **60s after creation**. That bounds how long a gap repaired *behind* the newest candle (ADR-005), which doesn't change the key, can be served stale.
+- Results whose window ends more than 48h before `latest` (outside the gap-scan window) don't change: cache for 1h (sliding).
+- Cache only after DB success, never cache errors. Each API replica keeps its own cache. The key is derived from the DB, so replicas never disagree for long and no distributed cache is needed.
 
 ### 6.5 Error handling & retries
 | Failure | Handling |
@@ -272,7 +272,7 @@ This query sits in `ICandleQueryRepository` in Infrastructure (raw SQL via `From
 | DB unavailable | Writer retries with exponential backoff (Polly, max 30s). Bounded channel (10k) with `DropOldest`; dropped candles are recovered by the gap scan once the DB is back |
 | Binance REST 429/418 | Respect `Retry-After`; backfill is low-priority and resumable |
 | Invalid symbol on add | API validates against `exchangeInfo` (cached 1h) before writing |
-| Listener connection lost (either side) | Reconnect with exponential backoff, then `LISTEN` → full reconcile. Missed notifications only delay convergence |
+| Worker's listener connection lost | Reconnect with exponential backoff, then `LISTEN` → full reconcile. Missed notifications only delay convergence |
 | Worker down | Reads keep working on existing data; admin changes are persisted and applied on worker start (reconcile); gaps are backfilled. Data staleness alert fires |
 | Two worker replicas | Only the advisory-lock holder ingests; the other is a hot standby |
 | Schema behind the code | Startup guard (`GetPendingMigrationsAsync`) fails readiness with "schema behind: run migrator" |
@@ -296,14 +296,14 @@ It parses JSON or XML into the shared DTOs and prints a table. ProblemDetails ma
 **Load estimate.** Ingest is 3 symbols ≈ 3 msgs/s on the WS (kline updates about every 2s while a candle is open) and 3 DB rows/min. At 100 symbols: about 50 msgs/s and 100 rows/min, still trivial. Reads depend on users and are cheap thanks to the PK index and cache.
 
 **Scaling path.**
-- *API reads:* stateless and horizontally scalable. Each replica costs one extra DB connection (its listener).
+- *API reads:* stateless and horizontally scalable. No `LISTEN` connection per replica; each request costs one extra index probe (`max(open_time)`).
 - *Ingestion:* one active worker is enough well past 100 symbols. A standby replica gives fast failover.
 - *Symbols > 1024:* shard subscriptions across several WS connections (Binance limit per connection). Replace the single advisory lock with per-shard locks and assign symbols by hash (ADR-007).
 
 **Health & monitoring.**
-- **API** `/health/live`, `/health/ready`: DB reachable, no pending migrations, `candles_written` listener connected.
+- **API** `/health/live`, `/health/ready`: DB reachable, no pending migrations.
 - **Ingestion** (internal port 8081) `/health/live`, `/health/ready`: DB reachable, no pending migrations, role `leader|standby`. For the leader also: WS connected, `symbol_changes` listener connected, `max(lastCandleAt)` < 2 min for every active symbol.
-- OpenTelemetry metrics: `candles_ingested_total{symbol}`, `ingest_lag_seconds` (`received_at − close_time`), `ws_reconnects_total`, `backfill_candles_total`, `channel_depth`, `pg_listener_reconnects_total{channel}`, `notifications_received_total{channel}`, `worker_is_leader`, HTTP RED metrics.
+- OpenTelemetry metrics: `candles_ingested_total{symbol}`, `ingest_lag_seconds` (`received_at − close_time`), `ws_reconnects_total`, `backfill_candles_total`, `channel_depth`, `marketdata.pg_listener.reconnects{channel}`, `marketdata.notifications.received{channel,outcome}` (meter `MarketData`; Prometheus export adds `_total`), `worker_is_leader`, HTTP RED metrics.
 - Alert ideas: data staleness > 3 min, reconnects > 5/h, backfill failing, no leader for > 1 min, migrator job failed.
 - Structured logging (Serilog/console JSON), with symbol in scope.
 
@@ -349,7 +349,7 @@ The README covers compose, local, k8s, roles and backfill behaviour.
 |---|---|---|---|
 | Store 1m klines, not ticks | Small data, exact buckets, REST backfill | No sub-minute resolution; "average" = time-weighted | Sub-minute analytics needed → add `@aggTrade` table |
 | Separate ingestion worker (ADR-007) | API scales out; isolated failures and deploys | Two deployables; admin changes apply asynchronously | Sharding needed past 1024 streams → per-shard advisory locks |
-| Postgres `LISTEN/NOTIFY` for signals | No new infrastructure; transactional with the admin write; broadcast to all API replicas | At-most-once (covered by reconcile); needs session-mode connections | Durable or high-volume events needed → outbox + broker |
+| Postgres `LISTEN/NOTIFY` for admin changes only | No new infrastructure; transactional with the admin write | At-most-once (covered by reconcile); the worker's listener needs a session-mode connection | Durable or high-volume events needed → outbox + broker |
 | Migration bundle as init container (ADR-008) | One explicit, lock-protected schema step; apps run with DML-only rights | Extra Docker stage and ordering config; expand/contract discipline | Long-running migrations → separate approved Job |
 | Seed symbols through `HasData` | Deterministic; no startup writes | Changing defaults needs a migration (or just the admin API) | — |
 | Postgres-specific SQL rollup | Fast, one round-trip | Not portable to SQLite; integration tests need Testcontainers | — (accepted) |
@@ -372,7 +372,7 @@ The README covers compose, local, k8s, roles and backfill behaviour.
 ## 11. Testing strategy (summary)
 - **Unit:** `TimePeriod` parsing/alignment (edge cases: week boundaries, `s` exactly on a boundary, DST-irrelevant UTC), SMA with gaps, rolling-series sliding window (last element equals the single SMA; partial windows at the start of history), request validation (`count` without `series=true` gives 400).
 - **Integration:** Testcontainers Postgres; the fixture applies migrations with `MigrateAsync()` (**test code only**) or runs the built bundle.
-  - **API** (`WebApplicationFactory`): JSON vs XML vs 406, ProblemDetails in XML, admin writes emit `symbol_changes` (and none on rollback), `candles_written` updates `latest` and invalidates the cache, readiness fails on pending migrations.
+  - **API** (`WebApplicationFactory`): JSON vs XML vs 406, ProblemDetails in XML, admin writes emit `symbol_changes` (and none on rollback), a newly stored candle changes the cache key (no stale result after the minute), readiness fails on pending migrations.
   - **Ingestion** (worker host + `FakeMarketDataStream` + stubbed REST): a `symbol_changes` notification subscribes or unsubscribes, reconcile after a listener drop, idempotent upsert, gap backfill, the advisory lock keeps a second worker in standby.
   - **End to end:** both hosts on one container: admin add through the API leads to ingestion and then to analysis results.
 - **Client:** run against the test server and check output for both formats.

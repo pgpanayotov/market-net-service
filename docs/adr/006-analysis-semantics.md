@@ -15,13 +15,13 @@ The review found three timing problems with anchoring at wall-clock `now`:
 - **R4:** a removed symbol still has history, but a `now`-anchored 24h window finds nothing and returns 404.
 
 ## Decision
-1. **Anchor at the data, not the clock.** `latest = max(open_time) + 1m` for the symbol. Each API replica caches it in memory, loads it from the DB on start or listener reconnect, and updates it from the worker's `candles_written` notifications ([ADR-007](007-separate-ingestion-worker-listen-notify.md)).
+1. **Anchor at the data, not the clock.** `latest = max(open_time) + 1m` for the symbol, read per request with a backward PK index probe (`ICandleQueryRepository.GetLatestOpenTimeAsync`). *(Amended in P3: originally an in-memory value fed by `candles_written` notifications; see ADR-007.)*
    - 24h average: window `[latest − 24h, latest)`. `isFullPeriod = false` when fewer than 24h exist. The response states `from`/`to`, so the anchor is visible.
    - SMA: `effectiveRef = floor(min(s ?? now, latest), p)`. A bucket counts only when it is complete in storage, never a half-written one.
 2. **Bucket value** is the close of the bucket's last 1m candle. Days start at 00:00 UTC. Weeks start Monday 00:00 UTC (date_bin origin `2000-01-03Z`, the same as Binance `1w`).
 3. **Single value (default):** mean of the last `n` bucket closes before `effectiveRef`, plus `dataPointsUsed` and optional `points`.
 4. **Series (`series=true`):** `count` values (default **`min(n, 100)`**, max 1000, fixes R7) in ascending time order. Each is SMA(n) ending at its bucket. One query fetches `n + count − 1` buckets, and the series is computed with an O(n + count) sliding `decimal` sum. Elements with 0 points are omitted. The last element equals the single-value result.
-5. **Caching keyed on data version (fixes R3).** Each symbol has a `CancellationChangeToken` in each API replica. The token fires when that replica receives a `candles_written` notification for the symbol (sent by the ingestion worker after commit, ADR-007). All tokens fire when the listener reconnects. Cache entries for that symbol depend on the token, plus a 10-min absolute cap. Requests with an explicit `s` where `effectiveRef < latest − 2m` are immutable and cached for 1h.
+5. **Cache keyed on the data version (fixes R3).** The cache key is `(endpoint, symbol, parameters, latestOpenTime)`. Each request first reads `latestOpenTime` (one index probe), so a newly stored candle automatically means a new key and nothing has to be invalidated. Entries expire 60s after creation, which bounds how long a gap repaired *behind* the newest candle (ADR-005) can be served stale. Results whose window ends more than 48h before `latest` (outside the gap-scan window) don't change, and are cached for 1h (sliding). *(Amended in P3: replaced per-symbol change tokens fired by `candles_written` notifications.)*
 6. **Status codes:** unknown symbol → 404 `"Unknown symbol"`. Known symbol with no data at all → 404 `"No data available"`. Partial data → 200 with `dataPointsUsed`/`isFullPeriod`.
 
 ## Options Considered
@@ -43,7 +43,7 @@ The review found three timing problems with anchoring at wall-clock `now`:
 ### Option C: Anchor at latest stored data ✅
 | Dimension | Assessment |
 |---|---|
-| Complexity | Low (one cached timestamp per symbol) |
+| Complexity | Low (one index probe per request) |
 | Correctness | Each bucket counts only when complete; deterministic for a given DB state |
 | Predictability | High; the response shows `from`/`to`/`referenceTime` |
 
@@ -54,13 +54,13 @@ The review found three timing problems with anchoring at wall-clock `now`:
 For an analysis API, *correct and explainable* beats *wall-clock fresh*. C trades at most ~1 minute of recency for exactness and determinism, which also makes caching trivial (the result changes only when data changes). The stall risk is an operations problem, and monitoring is the right place to handle it.
 
 ## Consequences
-- **Easier:** deterministic tests (fixed DB contents give a fixed answer regardless of the clock), simple cache invalidation, removed symbols remain fully analysable.
+- **Easier:** deterministic tests (fixed DB contents give a fixed answer regardless of the clock), caching without invalidation (the anchor is part of the key), removed symbols remain fully analysable.
 - **Harder:** clients must read `to`/`referenceTime` instead of assuming "now". This is documented in the README and the client prints it.
 - **Revisit:** if consumers need "as of now, even if stale", add `?anchor=now`. Bucket alignment for non-UTC days would need a `tz` parameter.
 
 ## Action Items
-1. [ ] `TimePeriod` value object: parse, `Floor(DateTimeOffset)`, `ToTimeSpan()`, Monday week origin.
-2. [ ] `PriceAnalysisService.Get24hAverageAsync` / `GetSmaAsync(n, p, s, series, count)` using `latest` from `ISymbolDataState`.
-3. [ ] Per-symbol change tokens in the API, fired by the `candles_written` listener (ADR-007).
-4. [ ] Unit tests: `s` on and off boundaries, `s > latest`, week boundary, gaps, series with partial windows at the start of history, `count` without `series` → 400.
+1. [x] `TimePeriod` value object: parse, `Floor(DateTimeOffset)`, `ToTimeSpan()`, Monday week origin.
+2. [x] `PriceAnalysisService.Get24hAverageAsync` / `GetSmaAsync(n, p, s, series, count)` using `latest` from `ICandleQueryRepository.GetLatestOpenTimeAsync`.
+3. [ ] API cache keyed by `latestOpenTime`: 60s absolute expiry, 1h sliding for windows older than 48h.
+4. [x] Unit tests: `s` on and off boundaries, `s > latest`, week boundary, gaps, series with partial windows at the start of history, `count` without `series` → 400.
 5. [ ] README: document A1/A2 and the anchoring rule with an example.

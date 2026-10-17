@@ -52,7 +52,7 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 - [x] `TimePeriod` value object: parse `1m|5m|30m|1d|1w` (case-sensitive, so `1M` is never read as a minute), `ToTimeSpan()`, `Floor(DateTimeOffset)` with the Monday week origin `2000-01-03Z`.
 - [x] `SymbolName` normalization (trim, upper-case, `^[A-Z0-9]{5,20}$`).
 - [x] `SmaCalculator`: single value and rolling series (O(n + count) sliding `decimal` sum, partial windows, elements with zero points omitted).
-- [x] `PriceAnalysisService` orchestration against interfaces: `ICandleQueryRepository`, `ISymbolRepository`, `ISymbolDataState`. It handles the anchoring rule `effectiveRef = floor(min(s ?? now, latest), p)` and the window `[latest − 24h, latest)`.
+- [x] `PriceAnalysisService` orchestration against interfaces: `ICandleQueryRepository` (including `GetLatestOpenTimeAsync`, added in P3), `ISymbolRepository`. It handles the anchoring rule `effectiveRef = floor(min(s ?? now, latest), p)` and the window `[latest − 24h, latest)`.
 - [x] Request validation: `1 ≤ n ≤ 1000`; `count` 1..1000 and only with `series=true`; `s` not in the future; default `count = min(n, 100)`.
 - [x] Contracts DTOs with `[DataContract]`/`[DataMember(Name=camelCase, EmitDefaultValue=false)]`: `AvgPriceResponse`, `SmaResponse` (+ `SmaPoint`, `SmaSeriesItem`), `SymbolDto`, `AddSymbolRequest`.
 - [x] Unit tests (ADR-006 list): boundary and off-boundary `s`, `s > latest`, week boundary, gaps, series vs. single equivalence, validation errors.
@@ -77,10 +77,10 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 **DoD:** `dotnet ef migrations has-pending-model-changes` is clean. The bundle applies to an empty DB and a re-run is a no-op.
 
 ### P3: Postgres notifications (ADR-007)
-- [ ] `IPgNotificationPublisher.NotifyAsync(channel, payload, transaction?)` → `SELECT pg_notify(@c, @p)` (enlists in the caller's EF transaction).
-- [ ] `PgNotificationListener` (abstract `BackgroundService`): dedicated non-pooled connection (`Pooling=false; KeepAlive=30`). Connect → `LISTEN` → `OnConnectedAsync` (reconcile hook) → `WaitAsync` loop. Exponential reconnect with jitter. Metrics `pg_listener_reconnects_total`, `notifications_received_total`.
-- [ ] Payload records + `System.Text.Json` source-gen context: `SymbolChangedPayload`, `CandlesWrittenPayload`.
-- [ ] Tests: notify inside a rolled-back transaction delivers nothing, notify on commit is delivered, after a forced `pg_terminate_backend` the listener reconnects and calls the reconcile hook.
+- [x] `IPgNotificationPublisher.NotifyAsync(channel, payload, transaction?)` → `SELECT pg_notify(@c, @p)` (enlists in the caller's EF transaction).
+- [x] `PgNotificationListener` (abstract `BackgroundService`): dedicated non-pooled connection (`Pooling=false; KeepAlive=30`). Connect → `LISTEN` → `OnConnectedAsync` (reconcile hook) → `WaitAsync` loop. Exponential reconnect with jitter. Metrics `pg_listener_reconnects_total`, `notifications_received_total`.
+- [x] Payload record + `System.Text.Json` source-gen context: `SymbolChangedPayload`. (`CandlesWrittenPayload` was dropped in P3; see ADR-007 amendment.)
+- [x] Tests: notify inside a rolled-back transaction delivers nothing, notify on commit is delivered, after a forced `pg_terminate_backend` the listener reconnects and calls the reconcile hook.
 
 **DoD:** the listener survives a backend kill in tests, and reconcile is called on every (re)connect.
 
@@ -88,7 +88,7 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 - [ ] Binance adapters (use the `.claude/skills/binance-net` skill): `IMarketDataStream` (subscribe or unsubscribe per symbol, `ConnectionLost`/`ConnectionRestored` events) and `IKlineRestClient` (paged klines, ≤1000 per request, honouring `Retry-After`). **Base URLs are configurable** (see Risks).
 - [ ] `KlineMapper`, shared by the WS and REST paths. Golden-file tests for both inputs give identical `Candle`s.
 - [ ] `LeaderLock` hosted service: `pg_try_advisory_lock` on a dedicated connection, standby retry every 10s, gates the other services.
-- [ ] `BinanceStreamCollector` → bounded `Channel<Candle>` (10k, `DropOldest`, drop counter) → `CandleWriter` (batch ≤500 rows or 1s, Polly retry, `pg_notify('candles_written')` per symbol after commit).
+- [ ] `BinanceStreamCollector` → bounded `Channel<Candle>` (10k, `DropOldest`, drop counter) → `CandleWriter` (batch ≤500 rows or 1s, Polly retry; no notification after commit).
 - [ ] `GapBackfiller`: tail mode (startup, `ConnectionRestored`, symbol add capped at `BackfillOnAdd`=24h) and scan mode (every 5 min, plus on drops or DB recovery).
 - [ ] `SymbolChangeListener` (P3 base): on connect, reconcile active symbols against live subscriptions; on notification, subscribe or unsubscribe idempotently; 60s periodic reconcile.
 - [ ] Health on `:8081`: live; ready = DB + no pending migrations + role. For the leader: WS connected, listener connected, and every active symbol fresh within 2 min.
@@ -105,14 +105,14 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
   - `GET` with `lastCandleAt`.
   - `POST` validates through `exchangeInfo` (cached 1h), then writes and notifies in one transaction; 201/200/400/409.
   - `DELETE` soft-deletes; 204/404.
-- [ ] `SymbolDataState` + `CandlesWrittenListener`: on connect, reload latest and fire all tokens; on notification, `latest = max(...)` and fire the symbol's token.
-- [ ] Caching: `IMemoryCache` entries tied to the symbol's change token, with a 10-min absolute cap. Immutable historical SMA cached for 1h (sliding).
-- [ ] Health: DB + no pending migrations + listener connected.
+- [ ] Every analysis request reads `latestOpenTime` through `ICandleQueryRepository.GetLatestOpenTimeAsync` (one index probe). No listener and no in-memory state in the API.
+- [ ] Caching: `IMemoryCache` key `(endpoint, symbol, params, latestOpenTime)`, 60s absolute expiry. Results whose window ends more than 48h before `latest` cached for 1h (sliding).
+- [ ] Health: DB + no pending migrations.
 - [ ] Integration tests (`WebApplicationFactory`):
   - Every endpoint returns JSON, XML, and 406 for `text/csv`.
   - 400, 401 and 404 as XML ProblemDetails.
   - Admin writes emit `symbol_changes`; a rollback emits nothing.
-  - A `candles_written` notification invalidates the cache.
+  - A newly stored candle changes the cache key (no stale result once the next minute is stored).
   - Readiness is red when migrations are pending.
 
 **DoD:** the full test matrix is green. OpenAPI document generated (`Microsoft.AspNetCore.OpenApi`) for README examples.

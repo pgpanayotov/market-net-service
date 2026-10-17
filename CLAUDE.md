@@ -52,10 +52,10 @@ Three runtime processes share one PostgreSQL database:
 - **`MarketData.Api`** (stateless, horizontally scalable, MVC controllers). Analysis endpoints and admin symbol endpoints. Never opens Binance WebSockets.
 - **`migrator`**: an EF Core migration bundle (`efbundle`) run as an init container. **Apps never call `MigrateAsync`/`EnsureCreated` or seed at startup** (only test fixtures may). They only check for pending migrations and report not-ready if any are found. Initial symbols are seeded with `HasData` in the initial migration.
 
-Cross-process signals use **Postgres LISTEN/NOTIFY**, treated as hints. The DB is the source of truth.
+The only cross-process signal is **Postgres LISTEN/NOTIFY** for admin changes, treated as a hint. The DB is the source of truth.
 - `symbol_changes` (API → worker) is sent with `pg_notify` **in the same transaction** as the `symbols` write. Admin POST/DELETE are therefore asynchronous with respect to ingestion.
-- `candles_written` (worker → every API replica) is sent after each committed batch. It updates the API's per-symbol `latest` timestamp and fires that symbol's `IMemoryCache` change token.
-- Every listener uses a dedicated non-pooled connection and follows **LISTEN first, then reconcile from the DB** on each (re)connect. The worker also reconciles every 60s. Handlers must be idempotent.
+- There is deliberately **no notification for new candles** (`candles_written` was dropped in P3). The API reads `max(open_time)` per request (`ICandleQueryRepository.GetLatestOpenTimeAsync`) and puts it in the cache key, so a new candle means a new key. Don't reintroduce worker → API signals or in-memory "latest" state.
+- The worker's listener (`PgNotificationListener` subclass) uses a dedicated non-pooled connection and follows **LISTEN first, then reconcile from the DB** on each (re)connect. The worker also reconciles every 60s. Handlers must be idempotent: re-read the symbol and don't trust the payload's `op`.
 
 Projects: `Contracts` (DTOs shared with the client, with `[DataContract]` attributes), `Core` (domain logic such as `TimePeriod` and the analysis service, no I/O), `Infrastructure` (EF Core DbContext + migrations + design-time factory, Binance adapters, raw SQL rollups, Pg listener), `Api`, `Ingestion`, `Client` (System.CommandLine).
 

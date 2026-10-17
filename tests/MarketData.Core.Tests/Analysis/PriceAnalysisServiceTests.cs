@@ -15,7 +15,6 @@ public class PriceAnalysisServiceTests
 
     private readonly ISymbolRepository _symbols = Substitute.For<ISymbolRepository>();
     private readonly ICandleQueryRepository _candles = Substitute.For<ICandleQueryRepository>();
-    private readonly ISymbolDataState _state = Substitute.For<ISymbolDataState>();
     private readonly PriceAnalysisService _service;
 
     public PriceAnalysisServiceTests()
@@ -25,7 +24,7 @@ public class PriceAnalysisServiceTests
         _candles
             .GetBucketClosesAsync(default, default, default, default, default, default)
             .ReturnsForAnyArgs(Array.Empty<BucketClose>());
-        _service = new PriceAnalysisService(_symbols, _candles, _state, new FakeTimeProvider(Now));
+        _service = new PriceAnalysisService(_symbols, _candles, new FakeTimeProvider(Now));
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -36,7 +35,7 @@ public class PriceAnalysisServiceTests
     public async Task Average_WindowIsAnchoredAtNewestStoredCandle()
     {
         // Newest candle 12:05 → data ends 12:06, even though the clock says 12:07:30.
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
         _candles.GetAverageCloseAsync(BtcId, At("2026-10-17T12:06:00Z"), At("2026-10-18T12:06:00Z"), Ct)
             .Returns(new CloseAverage(100.5m, 1440, At("2026-10-17T12:06:00Z")));
 
@@ -56,7 +55,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Average_WithLessThan24hHistory_ReportsAvailablePeriod()
     {
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
         _candles.GetAverageCloseAsync(BtcId, Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Ct)
             .Returns(new CloseAverage(42m, 60, At("2026-10-18T11:06:00Z")));
 
@@ -87,7 +86,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Average_SymbolWithoutData_IsNoData()
     {
-        _state.GetLatestOpenTime(BtcId).Returns((DateTimeOffset?)null);
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns((DateTimeOffset?)null);
 
         var result = await _service.Get24hAverageAsync("BTCUSDT", Ct);
 
@@ -97,7 +96,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Average_RepositoryReturnsNothing_IsNoData()
     {
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
         _candles.GetAverageCloseAsync(default, default, default, Ct).ReturnsForAnyArgs((CloseAverage?)null);
 
         var result = await _service.Get24hAverageAsync("BTCUSDT", Ct);
@@ -111,7 +110,7 @@ public class PriceAnalysisServiceTests
     public async Task Sma_DefaultStart_IsAnchoredAtDataEndAndFloored()
     {
         // Newest candle 12:05 → data ends 12:06 → 5m reference 12:05 (the 12:05–12:10 bucket is incomplete).
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
         GivenBuckets(TimePeriod.FiveMinutes, At("2026-10-18T10:25:00Z"), At("2026-10-18T12:05:00Z"), limit: 20,
             new BucketClose(At("2026-10-18T12:00:00Z"), 30m),
             new BucketClose(At("2026-10-18T11:55:00Z"), 10m));
@@ -131,7 +130,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Sma_ExplicitStartBeforeDataEnd_IsUsed()
     {
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
         GivenBuckets(TimePeriod.OneDay, At("2026-10-15T00:00:00Z"), At("2026-10-17T00:00:00Z"), limit: 2,
             new BucketClose(At("2026-10-16T00:00:00Z"), 5m));
 
@@ -145,7 +144,7 @@ public class PriceAnalysisServiceTests
     public async Task Sma_StartAfterDataEnd_IsClampedToDataEnd()
     {
         // Clock 12:07:30, s = 12:07 but newest candle 11:58 → data end 11:59 → 1m reference 11:59.
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T11:58:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T11:58:00Z"));
         GivenBuckets(TimePeriod.OneMinute, At("2026-10-18T11:56:00Z"), At("2026-10-18T11:59:00Z"), limit: 3,
             new BucketClose(At("2026-10-18T11:58:00Z"), 1m));
 
@@ -157,7 +156,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Sma_IncludePointsFalse_OmitsPoints()
     {
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
         _candles.GetBucketClosesAsync(default, default, default, default, default, Ct)
             .ReturnsForAnyArgs([new BucketClose(At("2026-10-18T12:04:00Z"), 1m)]);
 
@@ -170,7 +169,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Sma_Series_FetchesNPlusCountMinusOneBuckets()
     {
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
         // n=3, count=2 → limit 4 → from 12:05 - 20m.
         GivenBuckets(TimePeriod.FiveMinutes, At("2026-10-18T11:45:00Z"), At("2026-10-18T12:05:00Z"), limit: 4,
             new BucketClose(At("2026-10-18T11:45:00Z"), 1m),
@@ -201,7 +200,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Sma_SeriesWithoutData_IsNoData()
     {
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
 
         var result = await _service.GetSmaAsync(new SmaQuery("BTCUSDT", 3, "5m", Series: true), Ct);
 
@@ -211,7 +210,7 @@ public class PriceAnalysisServiceTests
     [Fact]
     public async Task Sma_SingleValueWithoutData_IsNoData()
     {
-        _state.GetLatestOpenTime(BtcId).Returns(At("2026-10-18T12:05:00Z"));
+        _candles.GetLatestOpenTimeAsync(BtcId, Ct).Returns(At("2026-10-18T12:05:00Z"));
 
         var result = await _service.GetSmaAsync(new SmaQuery("BTCUSDT", 3, "5m"), Ct);
 
