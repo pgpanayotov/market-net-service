@@ -135,9 +135,11 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 **DoD:** every analysis endpoint can be called from the client in both formats.
 
 ### P7: Containerization (ADR-008)
-- [ ] One multi-stage `Dockerfile` with targets `api`, `ingestion`, `migrator` (`runtime-deps` + `efbundle`) and `client`. Non-root user. `HEALTHCHECK` for api and ingestion.
-- [ ] `docker-compose.yml`: `postgres:17` (volume, `pg_isready`) → `migrator` (`restart: "no"`) → `api` + `ingestion` (`service_completed_successfully`). `client` sits under `profiles: [tools]`. Config through `.env` (`.env.example` committed).
-- [ ] Optional: `postgres/init/roles.sql` creating `marketdata_migrator` and `marketdata_app`. Compose defaults to a single user (documented).
+- [x] One multi-stage `Dockerfile` with targets `api`, `ingestion`, `migrator` (`runtime-deps` + `efbundle`) and `client`. Non-root user. `HEALTHCHECK` for api and ingestion.
+- [x] `docker-compose.yml`: `postgres:17` (volume, `pg_isready`) → `migrator` (`restart: "no"`) → `api` + `ingestion` (`service_completed_successfully`). `client` sits under `profiles: [tools]`. Config through `.env` (`.env.example` committed).
+- [ ] *(Skipped in P7: compose uses a single user; separate roles are documented for production in P8.)* Optional: `postgres/init/roles.sql` creating `marketdata_migrator` and `marketdata_app`. Compose defaults to a single user (documented).
+
+*Done 2026-10-18; see `engineering-notes.md` § P7.*
 
 **DoD:** `docker compose up --build` on a clean machine gives a healthy API and worker and 3 symbols ingesting. `docker compose run --rm client avg BTCUSDT` works after about 2 minutes.
 

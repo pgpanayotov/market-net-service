@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Phases P0–P6 are implemented on `main` (Core, persistence, notifications, ingestion worker, HTTP API, console client); P7 (containers) through P9 remain (see `docs/implementation-plan.md`). The code follows these documents:
+Phases P0–P7 are implemented on `main` (Core, persistence, notifications, ingestion worker, HTTP API, console client, Docker); P8 (docs, CI) and P9 (acceptance) remain (see `docs/implementation-plan.md`). The code follows these documents:
 - `docs/requirements.md`: the assignment spec (.NET 10 service that collects Binance Spot prices and offers analysis endpoints, plus a console client).
 - `docs/system-design.md`: the full design (data model, API contracts, pipelines, deployment).
 - `docs/adr/`: accepted decisions (ADR-001, 002, 004–008; ADR-003 is superseded). Don't contradict an accepted ADR. If a change is needed, write a new ADR that supersedes it and update `docs/system-design.md` and the index in `docs/adr/README.md`.
@@ -25,11 +25,12 @@ dotnet test --project tests/MarketData.Core.Tests --filter-class "MarketData.Cor
 dotnet test --project tests/MarketData.Core.Tests --filter-method "*Floor*"                                 # matching methods
 ```
 
-More commands (the `docker compose` ones arrive with P7 and don't work yet):
+More commands:
 ```bash
 docker compose up --build                                                         # postgres → migrator → ingestion + api (:8080)
 docker compose run --rm migrator                                                  # apply migrations only
 docker compose run --rm client avg BTCUSDT                                        # console client
+docker compose up -d --scale ingestion=2                                          # second worker = hot standby (advisory lock)
 dotnet ef migrations add <Name> --project src/MarketData.Infrastructure --startup-project src/MarketData.Infrastructure
 dotnet run --project src/MarketData.Api                                          # API (Development: dev-admin-key, local DB)
 dotnet run --project src/MarketData.Ingestion                                    # worker; health on :8081

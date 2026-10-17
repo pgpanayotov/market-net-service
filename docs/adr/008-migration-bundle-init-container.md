@@ -73,7 +73,7 @@ C keeps EF Core migrations as the single schema source (the requirement) and mov
 
 ## Action Items
 1. [x] `IDesignTimeDbContextFactory` in Infrastructure. Tool manifest pinning `dotnet-ef`.
-2. [ ] Dockerfile targets `api`, `ingestion`, `migrator`. Compose services with `service_completed_successfully`.
+2. [x] Dockerfile targets `api`, `ingestion`, `migrator`. Compose services with `service_completed_successfully`.
 3. [x] Initial migration with `HasData` for the three symbols. Remove `MigrateOnStartup` and `InitialSymbols`.
 4. [x] `PendingMigrationsHealthCheck` in both apps' readiness.
 5. [ ] README: "Database initialization" section covering compose, local `dotnet ef database update`, k8s init container, roles, and the expand/contract rule.

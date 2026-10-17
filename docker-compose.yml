@@ -1,0 +1,88 @@
+# Local stack (system-design §8, ADR-008):
+#   postgres → migrator (EF bundle, runs to completion) → ingestion + api
+#
+#   docker compose up --build -d
+#   docker compose run --rm client avg BTCUSDT
+#   docker compose up -d --scale ingestion=2      # second worker waits as hot standby
+#
+# Settings come from .env (see .env.example); every value has a local default.
+
+name: marketdata
+
+x-db-connection: &db-connection "Host=postgres;Port=5432;Database=${POSTGRES_DB:-marketdata};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres};GSS Encryption Mode=Disable"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-marketdata}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Applies migrations + seed data, then exits. api and ingestion start only after it succeeds.
+  migrator:
+    build:
+      context: .
+      target: migrator
+    image: marketdata/migrator:local
+    command: ["--connection", *db-connection]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  ingestion:
+    build:
+      context: .
+      target: ingestion
+    image: marketdata/ingestion:local
+    environment:
+      ConnectionStrings__MarketData: *db-connection
+      MarketData__Binance__RestBaseUrl: ${BINANCE_REST_URL:-https://api.binance.com}
+      MarketData__Binance__SocketBaseUrl: ${BINANCE_SOCKET_URL:-wss://stream.binance.com:9443}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: api
+    image: marketdata/api:local
+    environment:
+      ConnectionStrings__MarketData: *db-connection
+      Admin__ApiKey: ${ADMIN_API_KEY:-dev-admin-key}
+      MarketData__Binance__RestBaseUrl: ${BINANCE_REST_URL:-https://api.binance.com}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # On demand only: docker compose run --rm client <command>
+  client:
+    build:
+      context: .
+      target: client
+    image: marketdata/client:local
+    environment:
+      MARKETDATA_URL: http://api:8080
+      MARKETDATA_ADMIN_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+    profiles: [tools]
+
+volumes:
+  pgdata:

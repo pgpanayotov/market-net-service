@@ -320,22 +320,19 @@ One multi-stage `Dockerfile` (`sdk:10.0` build stage) with three service targets
 |---|---|---|
 | `api` | `aspnet:10.0` | `MarketData.Api` |
 | `ingestion` | `aspnet:10.0` (needed for its health endpoints) | `MarketData.Ingestion` |
-| `migrator` | `runtime-deps:10.0` | `efbundle`, built with `dotnet ef migrations bundle --project src/MarketData.Infrastructure --startup-project src/MarketData.Infrastructure --self-contained -r linux-x64` |
+| `migrator` | `runtime-deps:10.0` | `efbundle`, built with `dotnet ef migrations bundle --project src/MarketData.Infrastructure --startup-project src/MarketData.Infrastructure --self-contained -r linux-<arch>` (from `TARGETARCH`) |
 
-`docker-compose.yml`:
-```yaml
-services:
-  postgres:   { image: postgres:17, volumes: [pgdata:/var/lib/postgresql/data], healthcheck: pg_isready }
-  migrator:   { build: { target: migrator }, restart: "no",
-                command: ["./efbundle", "--connection", "${MARKETDATA_DB}"],
-                depends_on: { postgres: { condition: service_healthy } } }
-  ingestion:  { build: { target: ingestion },
-                depends_on: { migrator: { condition: service_completed_successfully } } }
-  api:        { build: { target: api }, ports: ["8080:8080"],
-                depends_on: { migrator: { condition: service_completed_successfully } } }
-  client:     { build: { target: client }, profiles: [tools] }   # docker compose run --rm client avg BTCUSDT
-```
-Env: `ConnectionStrings__MarketData` (all three), `Admin__ApiKey` (api).
+[`docker-compose.yml`](../docker-compose.yml) (implemented in P7):
+- **`postgres`** (`postgres:17-alpine`): named volume `pgdata`, `pg_isready` healthcheck.
+- **`migrator`**: `restart: "no"`, `command: ["--connection", …]`, waits for `postgres: service_healthy`.
+- **`ingestion`** and **`api`**: both wait for `migrator: service_completed_successfully`. The api is published on `${API_PORT:-8080}`; the ingestion health port (8081) stays internal. `docker compose up -d --scale ingestion=2` runs a hot standby.
+- **`client`**: `profiles: [tools]`, so it runs on demand: `docker compose run --rm client avg BTCUSDT`.
+- **Settings** come from `.env` (see [`.env.example`](../.env.example)) with local defaults for every value:
+  - `POSTGRES_*`, `ADMIN_API_KEY`, `API_PORT`;
+  - `BINANCE_REST_URL` / `BINANCE_SOCKET_URL` (the market-data mirrors where the official hosts are blocked);
+  - `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- **One shared connection string** (a YAML anchor) feeds the migrator argument and both apps' `ConnectionStrings__MarketData`. It sets `GSS Encryption Mode=Disable`, so Npgsql doesn't probe for the Kerberos library that the slim images lack (the warning seen in P2).
+- **Images:** they run as the non-root `app` user. api and ingestion have a `HEALTHCHECK` on `/health/ready`, probed through bash `/dev/tcp`, because the images have no curl or wget.
 
 **DB initialization ([ADR-008](adr/008-migration-bundle-init-container.md)):** there is **no `MigrateOnStartup`**. Schema and seed data (the three initial symbols, through `HasData`) are applied only by the `migrator` init container. It's idempotent (exits 0 when current) and lock-protected by EF Core, and it must complete before `api` and `ingestion` start.
 - **Kubernetes:** `initContainers: [migrator]` on both Deployments (or a pre-upgrade Job), using the `marketdata_migrator` credentials.

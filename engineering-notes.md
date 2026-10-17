@@ -281,3 +281,42 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
   - `symbols add SOLUSDT` was accepted by **live exchangeInfo**. The worker logged the notification and subscribed, and SOLUSDT had 1441 candles shortly after. `symbols add NOTAREALPAIR` was rejected with a 400.
   - `--raw --format xml` printed the `<avgPrice>` document.
   - Processes and the container were removed afterwards.
+
+### P7: Containerization (2026-10-18)
+
+**What was built:**
+- **`Dockerfile`**, one multi-stage build:
+  - The `sdk:10.0` build stage does a locked restore from project files only (cached layer), then copies `src/` and publishes per target.
+  - Four targets:
+    - `api` and `ingestion` (`aspnet:10.0`);
+    - `migrator` (`runtime-deps:10.0` + a self-contained `efbundle` for `linux-x64`/`linux-arm64`, chosen from `TARGETARCH`);
+    - `client` (`runtime:10.0`).
+  - Every image runs as the non-root `app` user (UID 1654). api and ingestion have a `HEALTHCHECK` on `/health/ready`.
+- **`.dockerignore`** keeps tests, docs, `.git`, `.claude`, `bin/obj` and `.env` out of the build context.
+- **`docker-compose.yml`:**
+  - Startup order: `postgres:17-alpine` (volume, `pg_isready`) → `migrator` (`restart: "no"`) → `ingestion` + `api` (`service_completed_successfully`). `client` sits under `profiles: [tools]`.
+  - One connection string, defined once as a YAML anchor.
+  - Every setting comes from `.env` with a local default. `.env.example` is committed; `.env` was already gitignored.
+
+**Decisions and deviations:**
+- **Healthchecks use bash `/dev/tcp`, not curl.** The .NET 10 runtime images are Ubuntu 24.04 with bash but no curl or wget. Installing curl would add packages and attack surface to every image, so the probe sends a raw `GET /health/ready` and checks for ` 200 `.
+- **`GSS Encryption Mode=Disable` in the compose connection string.** This avoids the `libgssapi_krb5.so.2` warning seen in P2. Container logs had 0 GSSAPI mentions.
+- **The worker's health port 8081 isn't published.** Only the API (`${API_PORT:-8080}`) and Postgres (`${POSTGRES_PORT:-5432}`, for local tools) are.
+- **`ADMIN_API_KEY` defaults to `dev-admin-key`**, so `docker compose up` works without a `.env`. `.env.example` and the README (P8) say to change it.
+- **Skipped the optional `roles.sql`:** compose uses one Postgres user. Separate migrator/app roles are a production concern, to be documented in P8.
+- **Image sizes** as reported by Docker Desktop's containerd store: api 380 MB, ingestion 379 MB, migrator 347 MB (self-contained bundle), client 301 MB. No trimming was attempted.
+
+**Validation** (Docker Desktop 29.8.1; host ports overridden to `POSTGRES_PORT=55434`, `API_PORT=18090` to avoid local clashes):
+- `docker compose config --quiet` passes, and `docker compose --profile tools build` builds all 4 images.
+- **`docker compose up -d`:**
+  - `migrator` applied `20261018160400_Initial` under EF's migration lock and exited 0. Only then did `ingestion` and `api` start.
+  - Both were `healthy` about 6s later, and the worker had backfilled 4320 candles (3 × 24h).
+- **Client, curl and migrator re-run:**
+  - `docker compose run --rm client`: `avg BTCUSDT` (full 24h), `sma ETHUSDT -n 10 -p 30m --format xml`, and `symbols list` (3 active symbols with recent `lastCandleAt`).
+  - From the host: curl with `Accept: application/xml` returned the `<avgPrice>` document, and `Accept: text/csv` returned 406.
+  - A `docker compose run --rm migrator` re-run printed "No migrations were applied. The database is already up to date."
+- **Standby and failover:**
+  - `--scale ingestion=2`: `ingestion-2` was healthy with role `standby` while `ingestion-1` was `leader`.
+  - After `docker stop` on the leader, `ingestion-2` became leader within 2s. One readiness probe during takeover was "listener not connected", then it went healthy.
+  - Each symbol then had contiguous candles up to the current minute.
+- Torn down with `docker compose --profile tools down -v`.
