@@ -758,6 +758,13 @@
           "xunit.v3.runner.common": "[4.0.2]"
         }
       },
+      "marketdata": {
+        "type": "Project",
+        "dependencies": {
+          "MarketData.Contracts": "[1.0.0, )",
+          "System.CommandLine": "[2.0.13, )"
+        }
+      },
       "marketdata.api": {
         "type": "Project",
         "dependencies": {
@@ -962,6 +969,12 @@
           "Microsoft.Extensions.Options": "10.0.0",
           "OpenTelemetry.Api.ProviderBuilderExtensions": "[1.20.0, 2.0.0)"
         }
+      },
+      "System.CommandLine": {
+        "type": "CentralTransitive",
+        "requested": "[2.0.13, )",
+        "resolved": "2.0.13",
+        "contentHash": "TIO2lMV+sSP7WW7pD/oCRHD9ENWY+jqwXmYzgks3R46cEdDzwjQOAhsiBn+M3EegfGjgTpa2h+eIrcU+AM2k6A=="
       }
     }
   }

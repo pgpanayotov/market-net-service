@@ -284,10 +284,11 @@ Because backfill restores anything lost, the system tolerates restarts and trans
 ```
 marketdata avg BTCUSDT
 marketdata sma BTCUSDT -n 20 -p 5m [-s 2026-10-18T12:00:00Z] [--points] [--series [--count 50]]
-marketdata symbols list | add SOLUSDT | remove ADAUSDT      (uses MARKETDATA_ADMIN_KEY)
-global: --url http://localhost:8080  --format json|xml  (sets Accept; shows negotiation works end to end)
+marketdata symbols list | add SOLUSDT | remove ADAUSDT      (uses --api-key or MARKETDATA_ADMIN_KEY)
+global: --url http://localhost:8080 (or MARKETDATA_URL)  --format json|xml  (sets Accept; shows negotiation works end to end)
+        --raw  (print the response body exactly as received)
 ```
-It parses JSON or XML into the shared DTOs and prints a table. ProblemDetails map to readable errors with exit code ≠ 0.
+It parses JSON or XML into the shared DTOs and prints a table. ProblemDetails (JSON or XML) map to readable errors on stderr. Exit codes: 0 success, 1 API error, 2 API unreachable or unreadable, other non-zero values for usage errors.
 
 ---
 

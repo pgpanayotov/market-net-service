@@ -122,13 +122,15 @@ Each phase ends with its **Definition of Done (DoD)**: `dotnet build` with zero 
 **DoD:** the full test matrix is green. OpenAPI document generated (`Microsoft.AspNetCore.OpenApi`) for README examples.
 
 ### P6: Console client
-- [ ] System.CommandLine commands:
+- [x] System.CommandLine commands:
   - `avg <symbol>`
   - `sma <symbol> -n -p [-s] [--points] [--series [--count]]`
   - `symbols list|add|remove`
-- [ ] Global options: `--url` (env `MARKETDATA_URL`) and `--format json|xml`, which sets `Accept`. Admin key comes from `MARKETDATA_ADMIN_KEY`.
-- [ ] Typed `HttpClient` deserializes JSON or XML into the shared DTOs, prints tables (with `from`/`to`/`referenceTime` shown), maps ProblemDetails to stderr, and exits non-zero on errors.
-- [ ] Tests against the in-memory API host (`WebApplicationFactory` handler), covering both formats.
+- [x] Global options: `--url` (env `MARKETDATA_URL`) and `--format json|xml`, which sets `Accept`. Admin key comes from `MARKETDATA_ADMIN_KEY`.
+- [x] Typed `HttpClient` deserializes JSON or XML into the shared DTOs, prints tables (with `from`/`to`/`referenceTime` shown), maps ProblemDetails to stderr, and exits non-zero on errors.
+- [x] Tests against the in-memory API host (`WebApplicationFactory` handler), covering both formats.
+
+*Done 2026-10-18; see `engineering-notes.md` § P6.*
 
 **DoD:** every analysis endpoint can be called from the client in both formats.
 

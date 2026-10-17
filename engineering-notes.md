@@ -241,3 +241,43 @@ Full log: [docs/phase-notes/P5.md](docs/phase-notes/P5.md).
   - `dotnet build MarketData.slnx`: 0 warnings, 0 errors.
   - `dotnet test --solution MarketData.slnx`: **233 passed** (97 Core + 41 Infrastructure + 65 API + 30 Ingestion), exit 0.
   - `dotnet ef migrations has-pending-model-changes`: no changes.
+
+### P6: Console client (2026-10-18)
+
+**What was built** (`src/MarketData.Client`, assembly `marketdata`):
+- `MarketDataApiClient`, a typed client over `HttpClient`:
+  - It sets `Accept` from `--format json|xml` and deserializes the shared Contracts DTOs with System.Text.Json (web defaults) or `DataContractSerializer`.
+  - POST bodies are sent in the same format.
+  - It also returns the raw body for `--raw`.
+- `ProblemReader` reads RFC 7807 errors in both formats: JSON `title`/`detail`/`errors`, and MVC's XML `urn:ietf:rfc:7807` `title`/`detail`/`MVC-Errors`. Anything else falls back to the status line. Errors surface as `ApiProblemException`.
+- `Cli` (System.CommandLine 2.0):
+  - `avg <symbol>`
+  - `sma <symbol> -n -p [-s] [--points] [--series [--count]]`
+  - `symbols list|add|remove`
+  - Recursive options: `--url` (`MARKETDATA_URL`, default `http://localhost:8080`), `--format`, `--raw`, `--api-key` (`MARKETDATA_ADMIN_KEY`).
+  - Output: aligned tables and key/value lines with UTC times and prices to at most 10 decimals (trailing zeros trimmed). Errors, including validation messages per parameter, go to stderr.
+- `Cli.RunAsync(args, out, err, createHttpClient)` takes injectable writers and an HttpClient factory, so tests can drive it against the in-memory API host.
+
+**Decisions and deviations:**
+- **Exit codes:** 0 success, 1 API error (ProblemDetails), 2 API unreachable, timed out or unreadable. System.CommandLine's own non-zero code for usage errors.
+- **Added `--raw` and `--api-key`** (not in the plan). `--raw` prints the negotiated body as received, which makes JSON vs XML visible. `--api-key` is an explicit alternative to the env variable.
+- **`--url` needs a custom parser**, because System.CommandLine 2.0 has no built-in `Uri` conversion (the first test run failed with "Cannot parse argument … as expected type System.Uri"). It accepts only absolute http(s) URLs.
+- **`--points` maps to `includePoints=true`; the client otherwise sends `includePoints=false`** to keep the default output short. The API default (`true`) is unchanged.
+- **The client passes `count` without `--series` through to the server**, so that misuse gets the same 400 as any other caller.
+- **`-s` is URL-escaped**, so `+02:00` offsets survive.
+- **The client tests live in `tests/MarketData.Api.IntegrationTests`** (`ConsoleClientTests`, with a project reference to the client) to reuse the API fixture's Postgres container and host rather than adding another test project.
+
+**Validation:**
+- `dotnet build MarketData.slnx`: 0 warnings, 0 errors.
+- `dotnet test --solution MarketData.slnx`: **251 passed** (18 new `ConsoleClientTests`). They cover, in both formats:
+  - avg, SMA with points, and the SMA series table;
+  - validation errors on stderr with per-parameter keys; 404 unknown symbol;
+  - symbols list/add/409/remove/reactivate.
+  - They also cover a `-s` offset with `+`, 401 with a key hint, `--raw` JSON/XML bodies, an unreachable API (exit 2), a missing `-n` and an invalid `--url` (usage errors).
+- **Live smoke run** (local, not Docker): `postgres:17-alpine` on :55433, `dotnet ef database update`, then the worker and the API run in Development against live Binance.
+  - The worker backfilled 4320 candles in about 8s and was leader-ready.
+  - Against the API, `marketdata` returned the 24h average (JSON and XML), `SMA(20, 5m)`, `SMA(3, 30m) --points --format xml`, and a 3-value series.
+  - `-p 1h` returned a 400 with the `p` message; `symbols list --format xml` worked.
+  - `symbols add SOLUSDT` was accepted by **live exchangeInfo**. The worker logged the notification and subscribed, and SOLUSDT had 1441 candles shortly after. `symbols add NOTAREALPAIR` was rejected with a 400.
+  - `--raw --format xml` printed the `<avgPrice>` document.
+  - Processes and the container were removed afterwards.
