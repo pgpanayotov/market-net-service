@@ -16,4 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MarketData.Api\MarketData.Api.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
