@@ -7,7 +7,7 @@ Running log of approach, key technical decisions and validation steps.
 Design came first, then implementation:
 1. [docs/requirements.md](docs/requirements.md) became the design in [docs/system-design.md](docs/system-design.md).
 2. A self-review found 8 issues (R1–R8). They are recorded in [docs/adr/README.md](docs/adr/README.md).
-3. Decisions are captured as ADRs. ADR-001, 002 and 004–008 are accepted, and ADR-003 is superseded by ADR-007 and ADR-008.
+3. Decisions are captured as ADRs. ADR-001, 002, 004–006, 008 and 009 are accepted. ADR-003 is superseded by ADR-007 and ADR-008, and ADR-009 supersedes the leader-election part of ADR-007.
 4. Work then follows the phases in [docs/implementation-plan.md](docs/implementation-plan.md) (P0–P9).
 
 ## Key decisions (summary — details in ADRs)
@@ -19,7 +19,8 @@ Design came first, then implementation:
 | HTTP | MVC controllers + DataContract XML formatters; XML ProblemDetails writer; API-key admin auth | 004 |
 | Completeness | Idempotent upserts + tail backfill + 48h gap scan, rather than a durable queue | 005 |
 | Analysis semantics | Anchored at the newest stored candle; complete buckets only; optional rolling series | 006 |
-| Topology | Separate ingestion worker (advisory-lock leader); Postgres LISTEN/NOTIFY as hints + reconcile | 007 |
+| Topology | Separate ingestion worker; Postgres LISTEN/NOTIFY as hints + reconcile | 007 |
+| Replicas | One ingestion replica, no leader election (overlap is harmless: idempotent upserts) | 009 |
 | Schema | EF migration bundle as init container; no `MigrateOnStartup`; seed through `HasData` | 008 |
 
 ## Phase log
